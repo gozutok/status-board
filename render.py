@@ -13,7 +13,10 @@ W, H = 800, 480
 NE = "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson"
 WORLD_GEOJSON = f"{NE}/ne_50m_admin_0_countries.geojson"
 MARINE_GEOJSON = f"{NE}/ne_50m_geography_marine_polys.geojson"
+PLACES_GEOJSON = f"{NE}/ne_50m_populated_places_simple.geojson"
+LAKES_GEOJSON = f"{NE}/ne_50m_lakes.geojson"
 MAX_LABELS = 6
+MAX_CITIES = 5
 CACHE = ".cache"
 FONT_DIR = "/usr/share/fonts/truetype/dejavu"
 LOCAL_TZ = ZoneInfo(os.environ.get("LOCAL_TZ", "Europe/Istanbul"))
@@ -44,6 +47,14 @@ def world():
 
 def marine():
     return geo(MARINE_GEOJSON, "ne50_marine.geojson")
+
+
+def places():
+    return geo(PLACES_GEOJSON, "ne50_places.geojson")
+
+
+def lakes():
+    return geo(LAKES_GEOJSON, "ne50_lakes.geojson")
 
 
 def rings(feat):
@@ -307,23 +318,28 @@ def grid_step(span):
 
 
 def svg_graticule(view):
-    """Hairline dotted lat/lon grid, so a mid-ocean crop is never a blank box."""
+    """Lat/lon grid.
+
+    The panel is 1-bit: it has no grey, so a hairline at 55% opacity — which is
+    what this used to be — thresholds away to nothing. Solid black, a full pixel
+    wide. The dashes are long enough not to be mistaken for the sea stipple
+    underneath them.
+    """
     step = grid_step(view.span)
     out = []
     lo = int(math.floor(view.lon_min / step)) * step
     while lo <= view.lon_max:
         x, _ = view.xy(view.lat_min, lo)
-        out.append(f'<line x1="{x:.1f}" y1="{view.y0}" x2="{x:.1f}" y2="{view.y1}"/>')
+        out.append(f'<line x1="{x:.0f}.5" y1="{view.y0}" x2="{x:.0f}.5" y2="{view.y1}"/>')
         lo += step
     la = int(math.floor(view.lat_min / step)) * step
     while la <= view.lat_max:
         _, y = view.xy(la, view.lon_min)
-        out.append(f'<line x1="{view.x0}" y1="{y:.1f}" x2="{view.x1}" y2="{y:.1f}"/>')
+        out.append(f'<line x1="{view.x0}" y1="{y:.0f}.5" x2="{view.x1}" y2="{y:.0f}.5"/>')
         la += step
     if not out:
         return ""
-    return ('<g stroke="#000" stroke-width="0.5" stroke-dasharray="1 5" opacity="0.55">'
-            + "".join(out) + "</g>")
+    return ('<g stroke="#000" stroke-width="1" stroke-dasharray="6 5">' + "".join(out) + "</g>")
 
 
 def svg_sea(view, avoid):
@@ -346,12 +362,48 @@ def svg_sea(view, avoid):
         if not any(abs(x - px) < half + pw and abs(y - py) < 24 for px, py, pw in avoid):
             avoid.append((x, y, half))
             return (f'<text x="{x:.0f}" y="{y:.0f}" font-size="13" letter-spacing="3" text-anchor="middle" '
-                    f'fill="#000" opacity="0.75" paint-order="stroke" stroke="#fff" stroke-width="3">'
+                    f'fill="#000" paint-order="stroke" stroke="#fff" stroke-width="3.5">'
                     f'{esc(label)}</text>')
     return ""
 
 
-def svg_countries(view, avoid):
+def svg_cities(view, avoid):
+    """Nearby towns, once the crop is tight enough for them to mean anything.
+
+    At whole-route zoom these are noise, so they only appear when the view has
+    narrowed to roughly a cruise crop or closer.
+    """
+    if view.span > 30:
+        return ""
+    cands = []
+    for f in places()["features"]:
+        p = f["properties"]
+        lon, lat = (f.get("geometry") or {}).get("coordinates", [None, None])[:2]
+        name = p.get("name")
+        if lat is None or not name or not view.contains(lat, lon, inset=8):
+            continue
+        cands.append(((p.get("scalerank") if p.get("scalerank") is not None else 9),
+                      -(p.get("pop_max") or 0), name, lat, lon))
+    cands.sort()
+    out = []
+    for _, _, name, lat, lon in cands:
+        x, y = view.xy(lat, lon)
+        half = 3.4 * len(name)
+        tx, ty = x + 5, y + 4
+        if not (view.x0 + 2 < tx and tx + 2 * half < view.x1 - 2):
+            tx = x - 5 - 2 * half
+        if any(abs(x - px) < half + pw and abs(y - py) < 16 for px, py, pw in avoid):
+            continue
+        avoid.append((x + half, y, half + 6))
+        out.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="2" fill="#000"/>'
+                   f'<text x="{tx:.0f}" y="{ty:.0f}" font-size="11" fill="#000" '
+                   f'paint-order="stroke" stroke="#fff" stroke-width="3">{esc(name)}</text>')
+        if len(out) >= MAX_CITIES:
+            break
+    return "".join(out)
+
+
+def svg_countries(view, avoid, limit=MAX_LABELS):
     """Country names by Natural Earth label point.
 
     MIN_LABEL is the scale at which Natural Earth intends a name to appear; keying
@@ -359,7 +411,7 @@ def svg_countries(view, avoid):
     instead of whichever small state happens to fall inside the crop.
     """
     span = view.span
-    limit = 2.0 if span > 60 else 3.0 if span > 25 else 5.0 if span > 10 else 99
+    thresh = 2.0 if span > 60 else 3.0 if span > 25 else 5.0 if span > 10 else 99
     cands = []
     for f in world()["features"]:
         p = f["properties"]
@@ -367,7 +419,7 @@ def svg_countries(view, avoid):
         if lx is None or ly is None or not name:
             continue
         mn = p.get("MIN_LABEL")
-        if mn is not None and mn > limit:
+        if mn is not None and mn > thresh:
             continue
         cands.append(((mn if mn is not None else 9), (p.get("LABELRANK") or 9), name, lx, ly))
     cands.sort(key=lambda c: (c[0], c[1], c[2]))
@@ -383,7 +435,7 @@ def svg_countries(view, avoid):
         avoid.append((x, y, half))
         out.append(f'<text x="{x:.0f}" y="{y:.0f}" font-size="13" text-anchor="middle" fill="#000" '
                    f'paint-order="stroke" stroke="#fff" stroke-width="3">{esc(label)}</text>')
-        if len(out) >= MAX_LABELS:
+        if len(out) >= limit:
             break
     return "".join(out)
 
@@ -458,9 +510,14 @@ def svg_leg(dt, now):
                 lats.append(pt[0]); lons.append(pt[1])
             view = MapView(box, lats, lons)
 
+        # Land and sea were both white, leaving nothing to tell them apart. A 1-bit
+        # panel has no grey to shade with, so the water carries a stipple instead:
+        # paint the whole box with it, then lay the white land polygons on top.
+        parts.append('<defs><pattern id="sea" width="6" height="6" patternUnits="userSpaceOnUse">'
+                     '<rect width="1.5" height="1.5" fill="#000"/></pattern></defs>')
         parts.append(f'<clipPath id="m"><rect x="{box[0]}" y="{box[1]}" width="{view.pw}" height="{view.ph}"/></clipPath>'
                      f'<g clip-path="url(#m)">')
-        parts.append(svg_graticule(view))
+        parts.append(f'<rect x="{box[0]}" y="{box[1]}" width="{view.pw}" height="{view.ph}" fill="url(#sea)"/>')
         d = []
         for feat in world()["features"]:
             for ring in rings(feat):
@@ -470,6 +527,17 @@ def svg_leg(dt, now):
                 if len(pts) > 2:
                     d.append("M" + " L".join(f"{x:.1f},{y:.1f}" for x, y in pts) + "Z")
         parts.append(f'<path d="{" ".join(d)}" fill="#fff" stroke="#000" stroke-width="1"/>')
+        w = []
+        for feat in lakes()["features"]:
+            for ring in rings(feat):
+                if not view.visible(ring, margin=0.5):
+                    continue
+                pts = view.thinned(ring)
+                if len(pts) > 2:
+                    w.append("M" + " L".join(f"{x:.1f},{y:.1f}" for x, y in pts) + "Z")
+        if w:
+            parts.append(f'<path d="{" ".join(w)}" fill="url(#sea)" stroke="#000" stroke-width="1"/>')
+        parts.append(svg_graticule(view))
 
         def pl(pts, width, dash=None):
             return ('<polyline points="' + " ".join(f"{x:.1f},{y:.1f}" for x, y in (view.xy(*pt) for pt in pts)) +
@@ -495,7 +563,8 @@ def svg_leg(dt, now):
             if ap.get("lat") is None or not view.contains(ap["lat"], ap["lon"]):
                 continue
             x, y = view.xy(ap["lat"], ap["lon"])
-            avoid.append((x, y, 26))
+            avoid.append((x, y, 14))
+            avoid.append((x, y + 24, 6.0 * len(code)))
             parts.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="6" fill="#000"/>')
             end = x > view.pw - 60
             parts.append(f'<text x="{x + (-10 if end else 10):.1f}" y="{y + 24:.1f}" font-size="20" font-weight="700"'
@@ -509,7 +578,9 @@ def svg_leg(dt, now):
                          f'<polygon points="0,{-sz} {sz * 0.6:.1f},{sz * 0.7:.1f} 0,{sz * 0.3:.1f} {-sz * 0.6:.1f},{sz * 0.7:.1f}" fill="#000"/>'
                          f'<circle r="{sz + 4}" fill="none" stroke="#000" stroke-width="2"/></g>')
         sea = svg_sea(view, avoid)
-        parts.append(svg_countries(view, avoid))
+        city = svg_cities(view, avoid)
+        parts.append(svg_countries(view, avoid, 3 if city else MAX_LABELS))
+        parts.append(city)
         parts.append(sea)
         parts.append('</g>')
     else:

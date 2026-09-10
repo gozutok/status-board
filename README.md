@@ -8,7 +8,12 @@ Pages sends `Cache-Control: max-age=600` on everything and offers no way to chan
 
 Ident · origin → destination · phase · type · registration · transmitted callsign, over a map
 carrying the flown path (solid), the remaining great circle (dotted), a position marker
-rotated to track, a 5° graticule, country names and the sea or ocean underneath.
+rotated to track, a graticule, country and city names, and the sea or ocean underneath.
+
+The panel is 1-bit, with no grey to shade with, so the map says everything in solid
+black: water carries a stipple to separate it from land (inland lakes included), and
+the graticule is a full-pixel dashed line rather than a tinted hairline. Nothing on
+the map uses opacity, because a tint thresholds away to nothing on the display.
 
 The screen follows the leg:
 
@@ -45,7 +50,7 @@ FR24 errors, runs out of credit or returns nothing.
 | Fallback route | adsbdb `/v0/callsign/…`, then adsb.lol `/api/0/routeset` |
 | Airline IATA → ICAO | OpenFlights airlines.dat, fallback adsbdb `/v0/airline/…` |
 | Airport coordinates and timezones | mwgg/Airports `airports.json` |
-| Coastlines, borders, country and sea names | Natural Earth 50m |
+| Coastlines, borders, lakes, country, city and sea names | Natural Earth 50m |
 
 ### Credits
 
