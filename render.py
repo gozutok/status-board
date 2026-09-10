@@ -496,7 +496,9 @@ def svg_leg(dt, now):
     inbound = dt.get("inbound") or {}
     o_code = o.get("iata") or o.get("icao") or "???"
     d_code = dest.get("iata") or dest.get("icao") or "???"
-    lat, lon = last.get("lat"), last.get("lon")
+    est = dt.get("est_pos") or {}
+    lat = est.get("lat", last.get("lat"))
+    lon = est.get("lon", last.get("lon"))
     box = (0, 72, 470, 400)
     F = 'font-family="Helvetica Neue,Helvetica,Arial,sans-serif"'
     parts = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" {F} style="background:#fff">',
@@ -578,6 +580,11 @@ def svg_leg(dt, now):
             parts.append(pl(in_rem, 2, "3 5"))
         if len(pts_path) > 1:
             parts.append(pl(pts_path, 4))
+        # The gap between the last measured fix and the estimate is the part nobody
+        # knows. Fine dots for it, so the eye reads solid-measured, dotted-guessed,
+        # dashed-still-to-fly.
+        if est and last.get("lat") is not None:
+            parts.append(pl(gc_line((last["lat"], last["lon"]), (lat, lon), 20), 3, "2 4"))
         if len(in_path) > 1:
             parts.append(pl(in_path, 3))
 
@@ -600,9 +607,16 @@ def svg_leg(dt, now):
             x, y = view.xy(lat, lon)
             avoid.append((x, y, 24))
             sz = 15
-            parts.append(f'<g transform="translate({x:.1f},{y:.1f}) rotate({float(last.get("track") or 0):.0f})">'
-                         f'<polygon points="0,{-sz} {sz * 0.6:.1f},{sz * 0.7:.1f} 0,{sz * 0.3:.1f} {-sz * 0.6:.1f},{sz * 0.7:.1f}" fill="#000"/>'
-                         f'<circle r="{sz + 4}" fill="none" stroke="#000" stroke-width="2"/></g>')
+            hdg = float(last.get("track") or 0)
+            if est:
+                parts.append(f'<g transform="translate({x:.1f},{y:.1f}) rotate({hdg:.0f})">'
+                             f'<polygon points="0,{-sz} {sz * 0.6:.1f},{sz * 0.7:.1f} 0,{sz * 0.3:.1f} {-sz * 0.6:.1f},{sz * 0.7:.1f}"'
+                             f' fill="#fff" stroke="#000" stroke-width="2"/>'
+                             f'<circle r="{sz + 4}" fill="none" stroke="#000" stroke-width="2" stroke-dasharray="3 3"/></g>')
+            else:
+                parts.append(f'<g transform="translate({x:.1f},{y:.1f}) rotate({hdg:.0f})">'
+                             f'<polygon points="0,{-sz} {sz * 0.6:.1f},{sz * 0.7:.1f} 0,{sz * 0.3:.1f} {-sz * 0.6:.1f},{sz * 0.7:.1f}" fill="#000"/>'
+                             f'<circle r="{sz + 4}" fill="none" stroke="#000" stroke-width="2"/></g>')
         sea = svg_sea(view, avoid)
         city = svg_cities(view, avoid)
         parts.append(svg_countries(view, avoid, 3 if city else MAX_LABELS))
@@ -705,7 +719,11 @@ def svg_leg(dt, now):
     # The provenance line went: it existed to show which source the board was
     # running on while that was still in doubt, and with only one line of text left
     # down here the band reads better centred than split across two rows.
-    if lat is not None:
+    if est:
+        src = est.get("from_s")
+        gap = ("{:.0f} dk".format(src / 60) if src and src >= 60 else "")
+        left = "tahmini konum" + (" \u00b7 son sabit " + gap + " \u00f6nce" if gap else "")
+    elif lat is not None:
         ns, ew = ("N" if lat >= 0 else "S"), ("E" if lon >= 0 else "W")
         deg = "\u00b0"
         left = "{:.2f}{}{}  {:.2f}{}{}".format(abs(lat), deg, ns, abs(lon), deg, ew)

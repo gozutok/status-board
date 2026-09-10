@@ -27,6 +27,7 @@ CACHE = ".cache"
 HOLD_AFTER_ARRIVAL = timedelta(minutes=int(os.environ.get("HOLD_AFTER_ARRIVAL_MIN", "60")))
 EXPIRE_AFTER = timedelta(hours=30)
 STALE_POS = timedelta(minutes=45)
+EST_AFTER = timedelta(minutes=20)
 SCHED_REFRESH = timedelta(minutes=60)
 NEAR_NM = 15
 LAST_CALL = {}
@@ -477,6 +478,34 @@ def search_by_route(icao_prefix, route):
     return None
 
 
+def dead_reckon(last, age_s, off_time, block_s, origin, dest, now):
+    """Where the aircraft should be, when the last real fix has gone stale.
+
+    Anchored on that fix rather than on the departure: the fix is measured, and only
+    the gap since it needs filling. With no fix at all — nothing was ever received —
+    it walks the great circle from the origin on elapsed time instead.
+    """
+    if dest.get("lat") is None:
+        return None
+    if last and last.get("lat") is not None and age_s is not None:
+        gs = last.get("gs_kt")
+        if not gs or not 100 <= gs <= 620:
+            total = gc_dist_nm(origin["lat"], origin["lon"], dest["lat"], dest["lon"]) \
+                if origin.get("lat") is not None else None
+            gs = (total / (block_s / 3600)) if total and block_s else 460
+        left = gc_dist_nm(last["lat"], last["lon"], dest["lat"], dest["lon"])
+        if left <= 0:
+            return None
+        f = min(gs * (age_s / 3600) / left, 0.98)
+        lat, lon = gc_point(last["lat"], last["lon"], dest["lat"], dest["lon"], f)
+        return {"lat": lat, "lon": lon, "from_s": age_s, "anchor": "fix"}
+    if off_time and block_s and origin.get("lat") is not None:
+        f = min(max((now.timestamp() - off_time) / block_s, 0.0), 0.98)
+        lat, lon = gc_point(origin["lat"], origin["lon"], dest["lat"], dest["lon"], f)
+        return {"lat": lat, "lon": lon, "from_s": now.timestamp() - off_time, "anchor": "off"}
+    return None
+
+
 def main():
     now = now_utc()
     cfg = json.load(open("config.json")) if os.path.exists("config.json") else {}
@@ -756,8 +785,16 @@ def main():
     else:
         out["off_block"] = prev.get("off_block")
 
-    if last and last.get("lat") is not None and dest.get("lat") is not None and leg_started:
-        rem = gc_dist_nm(last["lat"], last["lon"], dest["lat"], dest["lon"])
+    if leg_started and not prev.get("landed_at") and dest.get("lat") is not None \
+            and (age is None or age > EST_AFTER.total_seconds() or not last or last.get("lat") is None):
+        est = dead_reckon(last, age, out.get("off_time"), out.get("block_s") or (hist or {}).get("block_s"),
+                          origin, dest, now)
+        if est:
+            out["est_pos"] = est
+
+    ref = out.get("est_pos") or last
+    if ref and ref.get("lat") is not None and dest.get("lat") is not None and leg_started:
+        rem = gc_dist_nm(ref["lat"], ref["lon"], dest["lat"], dest["lon"])
         out["remaining_nm"] = round(rem)
         if fr24_eta:
             out["eta"] = fr24_eta
