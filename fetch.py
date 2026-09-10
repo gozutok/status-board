@@ -334,22 +334,6 @@ def expected_off_ts(tod, now, date_str, origin_tz):
     return cands[-1]
 
 
-def fr24_probe_around(last):
-    """Is our own aircraft in a plain area query around where it was last seen?
-
-    The one question never asked. If it comes back among the neighbours, the fault
-    is in the filters; if it does not, FR24's live set simply has no such aircraft,
-    whatever its website shows. Runs once per leg, not once per turn.
-    """
-    if not last or last.get("lat") is None:
-        return None
-    la, lo = last["lat"], last["lon"]
-    j = fr24_get("/live/flight-positions/full",
-                 {"bounds": f"{la + 2:.3f},{la - 2:.3f},{lo - 2:.3f},{lo + 2:.3f}", "limit": 20})
-    rows = (j or {}).get("data") or []
-    return [f"{r.get('flight') or '-'}/{r.get('callsign') or '-'}/{r.get('reg') or '-'}" for r in rows]
-
-
 def backtest_dr(pts, dest, block_s, origin):
     """Measure the extrapolation against the track it came from.
 
@@ -727,13 +711,6 @@ def main():
                              out.get("block_s") or (hist or {}).get("block_s"), origin)
             if bt:
                 out["log"].append(f"dead reckon backtest: {bt['err_nm']} NM over {bt['gap_min']} min")
-
-    if (FR24_TOKEN and leg_started and not pos and last and last.get("lat") is not None
-            and not prev.get("probed")):
-        out["probed"] = True
-        out["log"].append("fr24 area probe: " + str(fr24_probe_around(last)))
-    else:
-        out["probed"] = prev.get("probed") or False
 
     ref = out.get("est_pos") or last
     if ref and ref.get("lat") is not None and dest.get("lat") is not None and leg_started:
