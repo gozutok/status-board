@@ -32,10 +32,12 @@ permissions:
 
 concurrency:
   group: board
-  # A handover must not cancel the run it is relieving: that run is in its teardown,
-  # and the cache post-step it is still running is what carries the leg state to the
-  # next link. Setting a new flight, though, should take over at once.
-  cancel-in-progress: ${{ github.event.inputs.chain != '1' }}
+  # Only a person setting a flight preempts. A handover must not cancel the run it
+  # is relieving — that run is in its teardown, and its cache post-step is what
+  # carries the leg state forward — and neither must the cron, which has no inputs
+  # at all and so used to read as "not a handover" and cancel a new flight thirty
+  # seconds after it was entered.
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.chain != '1' }}
 
 env:
   # Pages caps freshness at ten minutes whatever we do, and its soft limit is ten
@@ -95,7 +97,23 @@ jobs:
           fi
           true
 
+      # The cron exists to revive a chain that died. If one is alive it has nothing
+      # to do, and going ahead would leave two chains dispatching successors at each
+      # other through the concurrency queue.
+      - name: Skip if the chain is already running
+        id: guard
+        run: |
+          beat=$(cat .cache/beat 2>/dev/null || echo 0)
+          age=$(( $(date +%s) - beat ))
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$age" -lt 900 ]; then
+            echo "chain alive ($age s since last pass), nothing to do"
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=0" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Fetch and render
+        if: steps.guard.outputs.skip != '1'
         id: board
         env:
           FR24_TOKEN: ${{ secrets.FR24_TOKEN }}
@@ -117,15 +135,18 @@ jobs:
           fi
 
           cp idle.json .cache/idle.json 2>/dev/null || true
+          date +%s > .cache/beat
           mkdir -p _site
           cp index.html board.svg board.png enter.html config.json _site/
           echo "tracking=$(python3 -c "import json;print(1 if json.load(open('data.json')).get('mode')=='leg' else 0)")" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-pages-artifact@v3
+        if: steps.guard.outputs.skip != '1'
         with:
           path: _site
 
       - id: deploy
+        if: steps.guard.outputs.skip != '1'
         uses: actions/deploy-pages@v4
 
       # A silent failure here freezes the board mid-flight, which is the exact class
