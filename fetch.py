@@ -193,10 +193,15 @@ def fr24_get(path, params):
         FR24_LOG.append(f"fr24 {path}: HTTP {r.status_code}")
         return None
     try:
-        return r.json()
+        j = r.json()
     except Exception:
         FR24_LOG.append(f"fr24 {path}: bad json")
         return None
+    rows = j.get("data") if isinstance(j, dict) else j
+    FR24_LOG.append("fr24 {} {} -> {} rows".format(
+        path, {k: v for k, v in params.items() if k != "limit"},
+        len(rows) if isinstance(rows, list) else "?"))
+    return j
 
 
 def fr24_ts(s):
@@ -209,10 +214,18 @@ def fr24_ts(s):
 
 
 def fr24_position(ident, reg):
-    """Live position for the leg. One call, 8 credits."""
-    params = {"registrations": reg, "limit": 5} if reg else {"flights": ident, "limit": 5}
-    j = fr24_get("/live/flight-positions/full", params)
-    rows = [x for x in (j or {}).get("data") or [] if x.get("lat") is not None]
+    """Live position for the leg. One call, 8 credits, two if the first is empty."""
+    queries = []
+    if reg:
+        queries.append({"registrations": reg})
+    if ident:
+        queries.append({"flights": ident})
+    rows = []
+    for q in queries:
+        j = fr24_get("/live/flight-positions/full", dict(q, limit=5))
+        rows = [x for x in (j or {}).get("data") or [] if x.get("lat") is not None]
+        if rows:
+            break
     if not rows:
         return None
     exact = [x for x in rows if (x.get("flight") or "").upper().replace(" ", "") == ident]
