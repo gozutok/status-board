@@ -215,8 +215,10 @@ def fr24_position(ident, reg):
     rows = [x for x in (j or {}).get("data") or [] if x.get("lat") is not None]
     if not rows:
         return None
-    exact = [x for x in rows if (x.get("flight") or "").upper() == ident]
+    exact = [x for x in rows if (x.get("flight") or "").upper().replace(" ", "") == ident]
     x = (exact or rows)[0]
+    flight = (x.get("flight") or "").upper().replace(" ", "")
+    is_leg = flight == ident if flight else not reg
     alt, gs = x.get("alt"), x.get("gspeed")
     ground = (alt or 0) < 1500 and (gs or 0) < 100
     pos = {
@@ -231,7 +233,8 @@ def fr24_position(ident, reg):
         route = {"origin": {"icao": x.get("orig_icao"), "iata": x.get("orig_iata")},
                  "destination": {"icao": x.get("dest_icao"), "iata": x.get("dest_iata")},
                  "source": "fr24"}
-    return {"pos": pos, "route": route, "eta": x.get("eta"), "fr24_id": x.get("fr24_id")}
+    return {"pos": pos, "route": route, "eta": x.get("eta"), "fr24_id": x.get("fr24_id"),
+            "is_leg": is_leg}
 
 
 def fr24_history(ident, now):
@@ -473,12 +476,20 @@ def main():
     reg = reg or (sched or {}).get("reg") or prev.get("reg") or ""
     pos = None
     fr24_route = fr24_eta = fr24_id = None
+    fr24_is_leg = False
 
+    fr24_inbound_route = None
     if FR24_TOKEN:
         got = fr24_position(ident, reg)
         if got:
             pos = got["pos"]
-            fr24_route, fr24_eta, fr24_id = got["route"], got["eta"], got["fr24_id"]
+            fr24_eta, fr24_id, fr24_is_leg = got["eta"], got["fr24_id"], got["is_leg"]
+            # Matched by registration on a different flight number: the aircraft is
+            # still flying its previous leg, so its route is the inbound one.
+            if fr24_is_leg:
+                fr24_route = got["route"]
+            else:
+                fr24_inbound_route = got["route"]
             out["providers"]["identify"] = "fr24 " + ("registration" if reg else "flight number")
     if not pos and hex_:
         pos = feed_lookup("hex", hex_) or opensky_state(hex_)
@@ -552,7 +563,9 @@ def main():
     seen_ground = prev.get("seen_ground_at_origin") or (bool(pos) and pos.get("ground") and near_origin)
     leg_started = prev.get("leg_started") or False
     if pos and not pos.get("ground") and not leg_started:
-        if seen_ground or (near_origin and (pos.get("alt_ft") or 0) < 15000 and (std is None or now.timestamp() > std - 3600)):
+        if fr24_is_leg:
+            leg_started = True
+        elif seen_ground or (near_origin and (pos.get("alt_ft") or 0) < 15000 and (std is None or now.timestamp() > std - 3600)):
             leg_started = True
         elif not sched and not route:
             leg_started = True
@@ -562,7 +575,18 @@ def main():
     inbound = None
     if pos and not leg_started:
         cs = pos.get("callsign")
-        ir = route_for_callsign(cs, pos.get("lat"), pos.get("lon")) if cs and cs != prev.get("inbound_cs") else prev.get("inbound_route")
+        ir = fr24_inbound_route
+        if ir:
+            for k in ("origin", "destination"):
+                a = ap.get(ir[k].get("icao") or "")
+                if a:
+                    ir[k].setdefault("lat", a.get("lat"))
+                    ir[k].setdefault("lon", a.get("lon"))
+                    ir[k]["iata"] = ir[k].get("iata") or a.get("iata")
+        elif cs and cs != prev.get("inbound_cs"):
+            ir = route_for_callsign(cs, pos.get("lat"), pos.get("lon"))
+        else:
+            ir = prev.get("inbound_route")
         inbound = {"callsign": cs, "route": ir, "ground": pos.get("ground")}
         out["inbound_cs"], out["inbound_route"] = cs, ir
         if ir and ir.get("destination", {}).get("lat") is not None and not pos.get("ground") and pos.get("gs_kt"):
