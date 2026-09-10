@@ -191,7 +191,7 @@ def fr24_get(path, params):
         FR24_LOG.append(f"fr24 {path}: {type(e).__name__}")
         return None
     if r.status_code != 200:
-        FR24_LOG.append(f"fr24 {path}: HTTP {r.status_code}")
+        FR24_LOG.append(f"fr24 {path}: HTTP {r.status_code} {r.text[:180]}")
         return None
     try:
         j = r.json()
@@ -212,6 +212,25 @@ def fr24_ts(s):
         return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
     except Exception:
         return None
+
+
+def fr24_probe_sources():
+    """Which data_sources syntax the API actually accepts.
+
+    Asked against a registration that cannot exist, so every variant returns no
+    results and costs one credit: whether a request is rejected does not depend on
+    what it would have matched. Runs once, then never again.
+    """
+    out = []
+    for v in ("ADSB,MLAT,ESTIMATED,UAT", "ADSB,MLAT,ESTIMATED", "ESTIMATED", "adsb,mlat,estimated", None):
+        params = {"registrations": "ZZ-ZZZZ", "limit": 1}
+        if v is not None:
+            params["data_sources"] = v
+        before = len(FR24_LOG)
+        j = fr24_get("/live/flight-positions/full", params)
+        note = FR24_LOG[before] if len(FR24_LOG) > before else "?"
+        out.append(f"[{v or 'yok'}] {'OK' if j is not None else note.split(': ', 1)[-1]}")
+    return out
 
 
 def fr24_position(ident, reg, callsign=None, first_only=False):
@@ -480,6 +499,12 @@ def main():
 
     fr24_inbound_route = None
     track_pts_seed = None
+    if FR24_TOKEN and not prev.get("src_probed"):
+        out["src_probed"] = True
+        out["log"].append("data_sources: " + " | ".join(fr24_probe_sources()))
+    else:
+        out["src_probed"] = prev.get("src_probed") or False
+
     misses = prev.get("live_misses") or 0
     if FR24_TOKEN:
         thin = misses >= 3 and misses % 5 != 0
