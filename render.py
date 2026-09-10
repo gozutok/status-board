@@ -452,6 +452,7 @@ def svg_countries(view, avoid, limit=MAX_LABELS):
 
 STATUS_TR = {
     "SCHEDULED": "PLANLANDI",
+    "NO POSITION": "KONUM YOK",
     "PREPARING": "HAZIRLANIYOR",
     "ON GROUND": "YERDE",
     "TAXI": "TAKSİDE",
@@ -661,7 +662,7 @@ def svg_leg(dt, now):
         off_txt = f'KALKIŞ ~{local(exp_off, o.get("tz"))} {o_code}' if exp_off else f'KALKIŞ --:-- {o_code}'
         arr = (exp_off + block_s) if exp_off and block_s else None
         eta_txt = f'VARIŞ ~{local(arr, dest.get("tz"))} {d_code}' if arr else f'VARIŞ --:-- {d_code}'
-        if have_o and have_d:
+        if have_o and have_d and status != "NO POSITION":
             rem_txt = f'{round(gc_dist_nm(o["lat"], o["lon"], dest["lat"], dest["lon"]))} NM'
         else:
             rem_txt = DASH
@@ -670,7 +671,7 @@ def svg_leg(dt, now):
             if (gs or 0) < 5:
                 trk = None
         if phase == "scheduled":
-            note = "transponder kapalı"
+            note = "konum alınamıyor" if status == "NO POSITION" else "kalkış bekleniyor"
         elif phase == "inbound":
             note = f"gelen {esc(inbound.get('callsign') or '')}".strip()
         else:
@@ -711,7 +712,8 @@ def svg_leg(dt, now):
     elif exp_off:
         tz = ZoneInfo(o.get("tz")) if o.get("tz") else LOCAL_TZ
         when = datetime.fromtimestamp(exp_off, timezone.utc).astimezone(tz).strftime("%d.%m %H:%M")
-        left = "tahmini kalkış " + when + " " + o_code
+        left = ("kalkmış olmalı, " + when + " " + o_code) if status == "NO POSITION" \
+            else ("tahmini kalkış " + when + " " + o_code)
     else:
         left = "Konum yok"
     parts.append('<text x="16" y="444" font-size="21">' + esc(left) + '</text>')

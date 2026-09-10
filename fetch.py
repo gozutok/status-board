@@ -319,6 +319,23 @@ def expected_off_ts(tod, now, date_str, origin_tz):
     return cands[-1]
 
 
+def fr24_traffic_near(route):
+    """How many flights FR24 will serve over the middle of this route.
+
+    Costs about two credits and runs only when the aircraft cannot be found and
+    should be airborne. It separates the two explanations: FR24 has nothing to give
+    in that airspace, or it has traffic there but not this flight.
+    """
+    o, d = route.get("origin") or {}, route.get("destination") or {}
+    if o.get("lat") is None or d.get("lat") is None:
+        return None
+    lat, lon = gc_point(o["lat"], o["lon"], d["lat"], d["lon"], 0.5)
+    j = fr24_get("/live/flight-positions/count",
+                 {"bounds": f"{lat + 8:.3f},{lat - 8:.3f},{lon - 8:.3f},{lon + 8:.3f}"})
+    rows = (j or {}).get("data") or []
+    return rows[0].get("record_count") if rows else None
+
+
 def fr24_track(fr24_id):
     """Flown path since departure. Called once per leg, 40 credits."""
     j = fr24_get("/flight-tracks", {"flight_id": fr24_id})
@@ -754,7 +771,17 @@ def main():
     elif pos:
         phase, status = "preparing", "ON GROUND"
     elif route or sched or hist:
-        phase, status = "scheduled", "SCHEDULED"
+        # No position is two different facts. Before the expected departure it means
+        # the aircraft has not started broadcasting yet, which is ordinary. After it,
+        # the flight is very likely airborne and we have simply lost it — saying
+        # "transponder off" there is an assertion the board cannot support, and the
+        # route distance is no longer anything to call "remaining".
+        exp = out.get("expected_off")
+        overdue = exp is not None and now.timestamp() > exp + 900
+        phase, status = "scheduled", ("NO POSITION" if overdue else "SCHEDULED")
+        if overdue and FR24_TOKEN and route:
+            n = fr24_traffic_near(route)
+            out["log"].append(f"fr24 traffic mid-route: {n}")
     else:
         phase, status = "scheduled", "NOT FOUND"
     out["phase"], out["status"] = phase, status
