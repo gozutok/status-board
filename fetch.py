@@ -220,7 +220,12 @@ def fr24_position(ident, reg):
     flight = (x.get("flight") or "").upper().replace(" ", "")
     is_leg = flight == ident if flight else not reg
     alt, gs = x.get("alt"), x.get("gspeed")
-    ground = (alt or 0) < 1500 and (gs or 0) < 100
+    # FR24 reports barometric altitude above sea level, not above the field, so an
+    # absolute ceiling puts every aircraft at Mexico City (7316 ft) or Quito (9200
+    # ft) in the air while it is still at the gate. Ground speed is the reliable
+    # signal — an airliner is never airborne below 40 kt — and the altitude test
+    # only guards the case where speed is missing at cruise.
+    ground = (gs or 0) < 40 and (alt or 0) < 15000
     pos = {
         "hex": (x.get("hex") or "").lower(), "callsign": (x.get("callsign") or "").strip(),
         "reg": x.get("reg"), "type": x.get("type"), "lat": x.get("lat"), "lon": x.get("lon"),
@@ -695,6 +700,15 @@ def main():
         out["flown_s"] = datetime.fromisoformat(out["landed_at"]).timestamp() - out["off_time"]
 
     vs = (last or {}).get("vs_fpm") if last else None
+    # A single vertical-speed reading taken once every six minutes is noisy: level
+    # cruise routinely shows a few hundred feet a minute. Where two samples are
+    # available the altitude between them says it far better — 300 fpm sustained is
+    # 1800 ft over that gap — so V/S is only the fallback for the first fix.
+    prev_pos = prev.get("last_pos") or {}
+    d_alt = None
+    if pos and pos.get("alt_ft") is not None and prev_pos.get("alt_ft") is not None \
+            and pos.get("pos_time") != prev_pos.get("pos_time"):
+        d_alt = pos["alt_ft"] - prev_pos["alt_ft"]
     fresh_pos = bool(pos) or (last and age is not None and age < STALE_POS.total_seconds())
     if landed:
         phase, status = "landed", "LANDED"
@@ -703,9 +717,13 @@ def main():
     elif leg_started and pos and pos.get("ground") and near_origin:
         phase, status = "taxi", "TAXI"
     elif leg_started and fresh_pos:
-        if vs is not None and vs > 300:
+        if d_alt is not None:
+            rising, falling = d_alt > 400, d_alt < -400
+        else:
+            rising, falling = (vs or 0) > 300, (vs or 0) < -300
+        if rising:
             phase, status = "climb", "CLIMB"
-        elif vs is not None and vs < -300:
+        elif falling:
             phase, status = "descent", "DESCENT"
         else:
             phase, status = "cruise", "CRUISE"
