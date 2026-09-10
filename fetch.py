@@ -214,27 +214,44 @@ def fr24_ts(s):
         return None
 
 
-def fr24_probe_sources():
-    """Which data_sources syntax the API actually accepts.
+def fr24_probe_sources(last):
+    """What the source filter actually does, measured rather than assumed.
 
-    Asked against a registration that cannot exist, so every variant returns no
-    results and costs one credit: whether a request is rejected does not depend on
-    what it would have matched. Runs once, then never again.
+    The same area asked three ways: no parameter, receptions only, estimates only.
+    If leaving it out really means "all sources", the first count is the sum of the
+    other two. Runs once for the life of a leg. Also records one whole row verbatim,
+    so the local tests can be built from a response FR24 really sent instead of one
+    written from the specification.
     """
-    out = []
-    for v in ("ADSB,MLAT,ESTIMATED,UAT", "ADSB,MLAT,ESTIMATED", "ESTIMATED", "adsb,mlat,estimated", None):
-        params = {"registrations": "ZZ-ZZZZ", "limit": 1}
-        if v is not None:
-            params["data_sources"] = v
-        before = len(FR24_LOG)
+    if not last or last.get("lat") is None:
+        return None
+    la, lo = last["lat"], last["lon"]
+    bounds = f"{la + 3:.3f},{la - 3:.3f},{lo - 3:.3f},{lo + 3:.3f}"
+    out, sample = [], None
+    for label, srcs in (("varsayilan", None), ("ADSB,MLAT", "ADSB,MLAT"), ("ESTIMATED", "ESTIMATED")):
+        params = {"bounds": bounds, "limit": 20}
+        if srcs:
+            params["data_sources"] = srcs
         j = fr24_get("/live/flight-positions/full", params)
-        note = FR24_LOG[before] if len(FR24_LOG) > before else "?"
-        out.append(f"[{v or 'yok'}] {'OK' if j is not None else note.split(': ', 1)[-1]}")
-    return out
+        rows = (j or {}).get("data") or []
+        seen = {}
+        for r in rows:
+            seen[(r.get("source") or "?")] = seen.get((r.get("source") or "?"), 0) + 1
+        out.append(f"{label}={len(rows)}{seen or ''}")
+        if sample is None and rows:
+            sample = rows[0]
+    return {"counts": " ".join(out), "sample": sample}
 
 
 def fr24_position(ident, reg, callsign=None, first_only=False):
-    """Live position for the leg. 8 credits a query, and later ones only run empty."""
+    """Live position for the leg, measured first and estimated only as a fallback.
+
+    The sources are named explicitly rather than left to the default. The docs say
+    an empty parameter means all of them, but that has not been measured here, and
+    an estimate must never be taken while a real fix is available. ADSB and MLAT are
+    receptions; ESTIMATED is Flightradar24's own dead reckoning for an aircraft that
+    has left coverage, and is asked for only when nothing was received.
+    """
     queries = []
     if reg:
         queries.append({"registrations": reg})
@@ -244,34 +261,32 @@ def fr24_position(ident, reg, callsign=None, first_only=False):
         queries.append({"callsigns": callsign})
     if first_only:
         queries = queries[:1]
-    rows = []
-    for q in queries:
-        j = fr24_get("/live/flight-positions/full",
-                     dict(q, limit=5, data_sources="ADSB,MLAT,ESTIMATED"))
-        rows = [x for x in (j or {}).get("data") or [] if x.get("lat") is not None]
-        if rows:
-            break
-    if not rows:
-        return None
+    for sources in ("ADSB,MLAT", "ESTIMATED"):
+        for q in queries:
+            j = fr24_get("/live/flight-positions/full",
+                         dict(q, limit=5, data_sources=sources))
+            rows = [x for x in (j or {}).get("data") or [] if x.get("lat") is not None]
+            if rows:
+                return _fr24_pos_from(rows, ident, reg)
+    return None
+
+
+def _fr24_pos_from(rows, ident, reg):
     exact = [x for x in rows if (x.get("flight") or "").upper().replace(" ", "") == ident]
     x = (exact or rows)[0]
     flight = (x.get("flight") or "").upper().replace(" ", "")
     is_leg = flight == ident if flight else not reg
     alt, gs = x.get("alt"), x.get("gspeed")
-    # FR24 reports barometric altitude above sea level, not above the field, so an
-    # absolute ceiling puts every aircraft at Mexico City (7316 ft) or Quito (9200
-    # ft) in the air while it is still at the gate. Ground speed is the reliable
-    # signal — an airliner is never airborne below 40 kt — and the altitude test
-    # only guards the case where speed is missing at cruise.
     ground = (gs or 0) < 40 and (alt or 0) < 15000
+    src = (x.get("source") or "").upper()
     pos = {
         "hex": (x.get("hex") or "").lower(), "callsign": (x.get("callsign") or "").strip(),
         "reg": x.get("reg"), "type": x.get("type"), "lat": x.get("lat"), "lon": x.get("lon"),
         "alt_ft": None if ground else alt, "alt_geo": False, "ground": ground,
         "gs_kt": gs, "track": x.get("track"), "vs_fpm": x.get("vspeed"),
         "pos_time": fr24_ts(x.get("timestamp")),
-        "source": ("fr24 " + (x.get("source") or "").lower()).strip(),
-        "estimated": (x.get("source") or "").upper() == "ESTIMATED",
+        "source": ("fr24 " + src.lower()).strip(),
+        "estimated": src == "ESTIMATED",
     }
     route = None
     if x.get("orig_icao") and x.get("dest_icao"):
@@ -631,12 +646,6 @@ def main():
 
     fr24_inbound_route = None
     track_pts_seed = None
-    if FR24_TOKEN and not prev.get("src_probed"):
-        out["src_probed"] = True
-        out["log"].append("data_sources: " + " | ".join(fr24_probe_sources()))
-    else:
-        out["src_probed"] = prev.get("src_probed") or False
-
     misses = prev.get("live_misses") or 0
     if FR24_TOKEN:
         thin = misses >= 3 and misses % 5 != 0
@@ -871,6 +880,15 @@ def main():
 
     if not out.get("est_pos") and (last or {}).get("estimated") and last.get("lat") is not None:
         out["est_pos"] = {"lat": last["lat"], "lon": last["lon"], "from_s": None, "anchor": "fr24"}
+
+    if FR24_TOKEN and not prev.get("src_probed") and last and last.get("lat") is not None:
+        out["src_probed"] = True
+        pr = fr24_probe_sources(last)
+        if pr:
+            out["log"].append("data_sources sayimi: " + pr["counts"])
+            out["log"].append("ornek satir: " + json.dumps(pr["sample"], sort_keys=True)[:900])
+    else:
+        out["src_probed"] = prev.get("src_probed") or False
 
     ref = out.get("est_pos") or last
     if ref and ref.get("lat") is not None and dest.get("lat") is not None and leg_started:
