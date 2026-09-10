@@ -569,17 +569,40 @@ def main():
             else:
                 fr24_inbound_route = got["route"]
             out["providers"]["identify"] = "fr24 " + ("registration" if reg else "flight number")
-    # Three live filters can all miss a flight FR24 is plainly tracking. The leg is
-    # still reachable another way: flight-summary names the one in the air right now,
-    # and its track ends at the aircraft's current position. Slower and dearer than a
-    # live fix, so only when the live fix is not there.
+    if not pos and hex_:
+        pos = feed_lookup("hex", hex_) or opensky_state(hex_)
+        if pos:
+            out["providers"]["identify"] = "hex"
+    if not pos and reg:
+        pos = feed_lookup("reg", reg)
+        if pos:
+            out["providers"]["identify"] = "registration"
+    if not pos and al_icao and number:
+        for cs in [f"{al_icao}{number}"] + ([f"{al_icao}{int(number):0{n}d}" for n in (2, 3, 4)]
+                                            if number.isdigit() else []):
+            pos = feed_lookup("callsign", cs)
+            if pos:
+                out["providers"]["identify"] = f"callsign {cs}"
+                break
+    # Three live filters can all miss a flight FR24 is plainly tracking, and over
+    # China the free feeds have no receivers either. The leg is still reachable:
+    # flight-summary names the one in the air right now, and its track ends at the
+    # aircraft's current position. Last because it costs forty credits against
+    # eight for a live fix, and the free feeds have just had their chance.
     if not pos and (hist or {}).get("current", {}).get("fr24_id"):
         cur = hist["current"]
         tr = fr24_track(cur["fr24_id"])
         pts = (tr or {}).get("pts") or []
         if pts:
             p0 = pts[-1]
-            prev_p = pts[-2] if len(pts) > 1 else None
+            # Two adjacent fixes can be seconds and a rounding apart, which turns
+            # into a ground speed of hundreds of knots either way. Walk back for a
+            # gap wide enough to average over.
+            prev_p = None
+            for q in reversed(pts[:-1]):
+                if p0[0] - q[0] >= 180:
+                    prev_p = q
+                    break
             brg = None
             if prev_p and (prev_p[1], prev_p[2]) != (p0[1], p0[2]):
                 brg = math.degrees(math.atan2(
@@ -590,6 +613,8 @@ def main():
             gs = None
             if prev_p and p0[0] > prev_p[0]:
                 gs = round(gc_dist_nm(prev_p[1], prev_p[2], p0[1], p0[2]) / ((p0[0] - prev_p[0]) / 3600))
+                if not 60 <= gs <= 620:
+                    gs = None
             pos = {"hex": (hex_ or ""), "callsign": cur.get("callsign") or "", "reg": cur.get("reg"),
                    "type": cur.get("type"), "lat": p0[1], "lon": p0[2],
                    "alt_ft": p0[3], "alt_geo": False,
@@ -601,23 +626,6 @@ def main():
             out["providers"]["identify"] = "fr24 summary"
             out["fr24_track_done"] = True
             track_pts_seed = pts
-    if not pos and hex_:
-        pos = feed_lookup("hex", hex_) or opensky_state(hex_)
-        if pos:
-            out["providers"]["identify"] = "hex"
-    if not pos and reg:
-        pos = feed_lookup("reg", reg)
-        if pos:
-            out["providers"]["identify"] = "registration"
-    if not pos and al_icao and number:
-        cands = [f"{al_icao}{number}"]
-        if number.isdigit():
-            cands += [f"{al_icao}{int(number):0{n}d}" for n in (2, 3, 4) if f"{al_icao}{int(number):0{n}d}" not in cands]
-        for cs in cands:
-            pos = feed_lookup("callsign", cs)
-            if pos:
-                out["providers"]["identify"] = f"callsign {cs}"
-                break
     route = fr24_route or prev.get("route")
     if not route and hist and hist.get("route"):
         route = hist["route"]
