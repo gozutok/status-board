@@ -161,8 +161,16 @@ def opensky_track(hex_):
     j = get(f"{OPENSKY}/tracks/all", params={"icao24": hex_, "time": 0})
     if not j or not j.get("path"):
         return None
-    return {"start": j.get("startTime"), "end": j.get("endTime"),
-            "pts": [[p[0], p[1], p[2], round(p[3] * 3.28084) if p[3] is not None else None] for p in j["path"] if p[1] is not None]}
+    raw = [p for p in j["path"] if p[1] is not None]
+    cut = 0
+    for i, p in enumerate(raw):
+        if p[5] or (p[3] is not None and p[3] < 60):
+            cut = i
+        elif i > 0 and p[0] - raw[i - 1][0] > 1800:
+            cut = i
+    raw = raw[cut:]
+    return {"start": raw[0][0] if raw else None, "end": j.get("endTime"),
+            "pts": [[p[0], p[1], p[2], round(p[3] * 3.28084) if p[3] is not None else None] for p in raw]}
 
 
 def route_for_callsign(callsign, lat=None, lon=None):
@@ -294,7 +302,7 @@ def main():
         merged = {round(p[0] / 30): p for p in path}
         for p in track["pts"]:
             merged[round(p[0] / 30)] = p
-        path = [merged[k] for k in sorted(merged)]
+        path = [merged[k] for k in sorted(merged) if merged[k][0] >= track["start"] - 60]
         out["providers"]["path"] = "opensky tracks"
     if pos and pos.get("lat") is not None:
         p = [pos["pos_time"] or now.timestamp(), pos["lat"], pos["lon"], pos["alt_ft"]]
@@ -305,9 +313,8 @@ def main():
         path = path[::2]
     out["path"] = path
 
-    if not out.get("off_time"):
-        airborne = [p for p in path if p[3] and p[3] > 1000]
-        out["off_time"] = prev.get("off_time") or (airborne[0][0] if airborne else None)
+    airborne = [p for p in path if p[3] and p[3] > 1000]
+    out["off_time"] = airborne[0][0] if airborne else prev.get("off_time")
 
     last = pos or prev.get("last_pos")
     if pos:
