@@ -189,9 +189,9 @@ def render_leg(dt, now):
     eta = dt.get("eta")
     togo = (datetime.fromisoformat(eta) - now).total_seconds() if eta and status != "ARRIVED" else None
     d.text((x, 78), "SINCE OFF", font=font(16), fill=0)
-    d.text((x, 94), hm(since), font=font(50, True), fill=0)
+    d.text((x, 94), hm(since), font=font(44, True), fill=0)
     d.text((x + 152, 78), "TO GO est", font=font(16), fill=0)
-    d.text((x + 152, 94), hm(togo), font=font(50, True), fill=0)
+    d.text((x + 152, 94), hm(togo), font=font(44, True), fill=0)
     total = (since or 0) + (togo or 0)
     frac = 1.0 if status == "ARRIVED" else (since / total if since and total else 0.0)
     d.rectangle([x, 158, W - 16, 174], outline=0, width=2)
