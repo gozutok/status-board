@@ -224,8 +224,7 @@ def fr24_position(ident, reg, callsign=None):
         queries.append({"callsigns": callsign})
     rows = []
     for q in queries:
-        j = fr24_get("/live/flight-positions/full",
-                     dict(q, limit=5, data_sources="ADSB,MLAT,ESTIMATED,UAT"))
+        j = fr24_get("/live/flight-positions/full", dict(q, limit=5))
         rows = [x for x in (j or {}).get("data") or [] if x.get("lat") is not None]
         if rows:
             break
@@ -512,8 +511,10 @@ def main():
     hist = prev.get("hist")
     hist_at = datetime.fromisoformat(hist["fetched_at"]) if hist and hist.get("fetched_at") else None
     prev_phase = prev.get("phase")
-    if FR24_TOKEN and ident and (not hist or (prev_phase in (None, "scheduled", "preparing", "inbound")
-                                              and now - hist_at > SCHED_REFRESH)):
+    lost = prev_phase in ("scheduled", "airborne") and not (prev.get("last_pos") or {}).get("lat")
+    stale = hist_at is not None and now - hist_at > (timedelta(minutes=10) if lost else SCHED_REFRESH)
+    if FR24_TOKEN and ident and (not hist or "current" not in hist
+                                 or (prev_phase in (None, "scheduled", "preparing", "inbound") and stale)):
         fresh_hist = fr24_history(ident, now)
         if fresh_hist:
             fresh_hist["fetched_at"] = now.isoformat()
