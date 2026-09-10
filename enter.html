@@ -16,7 +16,7 @@ button.plain{background:#333}
 #msg{margin-top:14px;font-size:14px;min-height:20px;color:#9d9}
 #msg.err{color:#f88}
 #status{margin-top:20px;font-size:13px;color:#aaa;white-space:pre-line}
-img{width:100%;margin-top:12px;border:1px solid #333;background:#fff}
+iframe#preview{width:100%;aspect-ratio:800/480;margin-top:12px;border:1px solid #333;background:#fff}
 details{margin-top:24px;font-size:13px;color:#aaa}
 </style>
 </head>
@@ -30,7 +30,7 @@ details{margin-top:24px;font-size:13px;color:#aaa}
 <button id="stop" class="stop">Stop / photos</button>
 <div id="msg"></div>
 <div id="status"></div>
-<img id="preview" alt="">
+<iframe id="preview" title="board"></iframe>
 <details>
 <summary>Token</summary>
 <label>GitHub fine-grained token (stored only in this browser)</label>
@@ -54,13 +54,34 @@ async function dispatch(ident,reg){
 }
 $("start").onclick=()=>dispatch($("ident").value.trim().toUpperCase(),$("reg").value.trim().toUpperCase());
 $("stop").onclick=()=>dispatch("","");
+async function runInfo(){
+  if(!tok())return "";
+  try{
+    const r=await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/actions/runs?per_page=1`,
+      {headers:{"Authorization":"Bearer "+tok(),"Accept":"application/vnd.github+json"}});
+    if(!r.ok)return "";
+    const run=(await r.json()).workflow_runs[0];
+    if(!run)return "";
+    const mins=Math.round((Date.now()-new Date(run.created_at))/60000);
+    const state=run.status==="completed"?run.conclusion:run.status;
+    return `last run: ${state} · ${mins} min ago`;
+  }catch(e){return "";}
+}
 async function refresh(){
-  try{const d=await (await fetch("data.json?t="+Date.now())).json();
-    $("status").textContent=d.mode==="leg"?`Tracking ${d.ident||""} · ${d.status||""} · ${d.callsign||""} ${d.reg||""}\n${JSON.stringify(d.providers||{})}\nupdated ${d.generated||""}`:"Idle (photos)";
-    if(d.mode==="leg"&&d.ident)$("ident").value=d.ident;}catch(e){}
-  $("preview").src="board.png?t="+Date.now();
+  let line="";
+  try{
+    const c=await (await fetch("config.json?t="+Date.now())).json();
+    if(c.ident){
+      const age=Math.round((Date.now()-new Date(c.set_at))/60000);
+      line=`tracking ${c.ident}${c.reg?" "+c.reg:""} · set ${age} min ago`;
+    }else{line="idle (photos)";}
+  }catch(e){line="config unavailable";}
+  const rl=await runInfo();
+  $("status").textContent=rl?line+"\n"+rl:line;
+  $("preview").src="index.html?t="+Date.now();
 }
 refresh();
+setInterval(refresh,60000);
 </script>
 </body>
 </html>

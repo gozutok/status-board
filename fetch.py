@@ -18,6 +18,8 @@ FEEDS = [
 OPENSKY = "https://opensky-network.org/api"
 ADSBDB = "https://api.adsbdb.com/v0"
 ROUTESET = "https://api.adsb.lol/api/0/routeset"
+FR24 = "https://fr24api.flightradar24.com/api"
+FR24_TOKEN = os.environ.get("FR24_TOKEN", "").strip()
 AVSTACK = "http://api.aviationstack.com/v1/flights"
 AIRLINES = "https://raw.githubusercontent.com/jpatokal/openflights/master/data/airlines.dat"
 AIRPORTS = "https://raw.githubusercontent.com/mwgg/Airports/master/airports.json"
@@ -28,6 +30,7 @@ STALE_POS = timedelta(minutes=45)
 SCHED_REFRESH = timedelta(minutes=60)
 NEAR_NM = 15
 LAST_CALL = {}
+FR24_LOG = []
 
 
 def now_utc():
@@ -170,6 +173,121 @@ def fetch_schedule(ident, key, date, now):
     }
 
 
+def fr24_get(path, params):
+    """One FR24 call. Returns the parsed body, or None on any failure."""
+    if not FR24_TOKEN:
+        return None
+    host = "fr24api.flightradar24.com"
+    wait = LAST_CALL.get(host, 0) + 6.5 - time.time()
+    if wait > 0:
+        time.sleep(wait)
+    LAST_CALL[host] = time.time()
+    try:
+        r = requests.get(f"{FR24}{path}", params=params, timeout=25, headers={
+            **UA, "Accept": "application/json", "Accept-Version": "v1",
+            "Authorization": f"Bearer {FR24_TOKEN}"})
+    except Exception as e:
+        FR24_LOG.append(f"fr24 {path}: {type(e).__name__}")
+        return None
+    if r.status_code != 200:
+        FR24_LOG.append(f"fr24 {path}: HTTP {r.status_code}")
+        return None
+    try:
+        return r.json()
+    except Exception:
+        FR24_LOG.append(f"fr24 {path}: bad json")
+        return None
+
+
+def fr24_ts(s):
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+
+def fr24_position(ident, reg):
+    """Live position for the leg. One call, 8 credits."""
+    params = {"registrations": reg, "limit": 5} if reg else {"flights": ident, "limit": 5}
+    j = fr24_get("/live/flight-positions/full", params)
+    rows = [x for x in (j or {}).get("data") or [] if x.get("lat") is not None]
+    if not rows:
+        return None
+    exact = [x for x in rows if (x.get("flight") or "").upper() == ident]
+    x = (exact or rows)[0]
+    alt, gs = x.get("alt"), x.get("gspeed")
+    ground = (alt or 0) < 1500 and (gs or 0) < 100
+    pos = {
+        "hex": (x.get("hex") or "").lower(), "callsign": (x.get("callsign") or "").strip(),
+        "reg": x.get("reg"), "type": x.get("type"), "lat": x.get("lat"), "lon": x.get("lon"),
+        "alt_ft": None if ground else alt, "alt_geo": False, "ground": ground,
+        "gs_kt": gs, "track": x.get("track"), "vs_fpm": x.get("vspeed"),
+        "pos_time": fr24_ts(x.get("timestamp")), "source": "fr24",
+    }
+    route = None
+    if x.get("orig_icao") and x.get("dest_icao"):
+        route = {"origin": {"icao": x.get("orig_icao"), "iata": x.get("orig_iata")},
+                 "destination": {"icao": x.get("dest_icao"), "iata": x.get("dest_iata")},
+                 "source": "fr24"}
+    return {"pos": pos, "route": route, "eta": x.get("eta"), "fr24_id": x.get("fr24_id")}
+
+
+def fr24_history(ident, now):
+    """Previous legs of this flight number: typical takeoff time, block time, route.
+
+    This is what fills the screen when the flight is entered hours ahead and no
+    live position exists yet.
+    """
+    j = fr24_get("/flight-summary/light", {
+        "flights": ident, "limit": 10,
+        "flight_datetime_from": (now - timedelta(days=4)).strftime("%Y-%m-%dT%H:%M:%S"),
+        "flight_datetime_to": now.strftime("%Y-%m-%dT%H:%M:%S")})
+    rows = (j or {}).get("data") or []
+    offs, blocks, last_row = [], [], None
+    for r in rows:
+        t, l = fr24_ts(r.get("datetime_takeoff")), fr24_ts(r.get("datetime_landed"))
+        if t:
+            offs.append(t % 86400)
+            last_row = r
+        if t and l and 0 < l - t < 20 * 3600:
+            blocks.append(l - t)
+    if not offs:
+        return None
+    offs.sort(); blocks.sort()
+    tod = offs[len(offs) // 2]
+    block = blocks[len(blocks) // 2] if blocks else None
+    day = int(now.timestamp()) // 86400 * 86400
+    expected = day + tod
+    if expected < now.timestamp() - 3 * 3600:
+        expected += 86400
+    out = {"source": "fr24 history", "expected_off": expected, "block_s": block, "samples": len(offs)}
+    if last_row and last_row.get("orig_icao") and last_row.get("dest_icao"):
+        out["route"] = {"origin": {"icao": last_row["orig_icao"]}, "destination": {"icao": last_row["dest_icao"]},
+                        "source": "fr24 history"}
+    out["reg"], out["type"] = (last_row or {}).get("reg"), (last_row or {}).get("type")
+    return out
+
+
+def fr24_track(fr24_id):
+    """Flown path since departure. Called once per leg, 40 credits."""
+    j = fr24_get("/flight-tracks", {"flight_id": fr24_id})
+    rows = (j or [])
+    if isinstance(rows, dict):
+        rows = rows.get("data") or []
+    pts = []
+    for entry in rows:
+        for p in entry.get("tracks") or []:
+            t = fr24_ts(p.get("timestamp"))
+            if t and p.get("lat") is not None:
+                pts.append([t, p["lat"], p["lon"], p.get("alt")])
+    if not pts:
+        return None
+    pts.sort(key=lambda p: p[0])
+    return {"start": pts[0][0], "pts": pts}
+
+
 def norm_ac(a, feed, now_ms):
     alt = a.get("alt_baro")
     ground = alt == "ground"
@@ -225,6 +343,10 @@ def opensky_track(hex_):
             cut = i
         elif i > 0 and p[0] - raw[i - 1][0] > 1200 and (raw[i - 1][3] is None or raw[i - 1][3] < 1000):
             cut = i
+    for i in range(len(raw) - 1, 0, -1):
+        if raw[i][0] - raw[i - 1][0] > 1800:
+            cut = max(cut, i)
+            break
     raw = raw[cut:]
     return {"start": raw[0][0] if raw else None, "end": j.get("endTime"),
             "pts": [[p[0], p[1], p[2], round(p[3] * 3.28084) if p[3] is not None else None] for p in raw]}
@@ -308,10 +430,23 @@ def main():
     date = (cfg.get("date") or "").strip() or None
     av_key = os.environ.get("AVIATIONSTACK_KEY")
 
+    hist = prev.get("hist")
+    hist_at = datetime.fromisoformat(hist["fetched_at"]) if hist and hist.get("fetched_at") else None
+    prev_phase = prev.get("phase")
+    if FR24_TOKEN and ident and (not hist or (prev_phase in (None, "scheduled", "preparing", "inbound")
+                                              and now - hist_at > SCHED_REFRESH)):
+        fresh_hist = fr24_history(ident, now)
+        if fresh_hist:
+            fresh_hist["fetched_at"] = now.isoformat()
+            hist = fresh_hist
+        elif not hist:
+            out["log"].append("fr24 history: no previous legs")
+    out["hist"] = hist
+
     sched = prev.get("sched")
     fetched = datetime.fromisoformat(sched["fetched_at"]) if sched and sched.get("fetched_at") else None
     phase_prev = prev.get("phase")
-    if av_key and (not sched or (phase_prev in (None, "planned", "inbound", "taxi") and now - fetched > SCHED_REFRESH)):
+    if av_key and (not sched or (phase_prev in (None, "scheduled", "preparing", "inbound", "taxi") and now - fetched > SCHED_REFRESH)):
         fresh = fetch_schedule(ident, av_key, date, now)
         if fresh:
             if sched:
@@ -337,8 +472,15 @@ def main():
     hex_ = prev.get("hex") or (sched or {}).get("hex")
     reg = reg or (sched or {}).get("reg") or prev.get("reg") or ""
     pos = None
+    fr24_route = fr24_eta = fr24_id = None
 
-    if hex_:
+    if FR24_TOKEN:
+        got = fr24_position(ident, reg)
+        if got:
+            pos = got["pos"]
+            fr24_route, fr24_eta, fr24_id = got["route"], got["eta"], got["fr24_id"]
+            out["providers"]["identify"] = "fr24 " + ("registration" if reg else "flight number")
+    if not pos and hex_:
         pos = feed_lookup("hex", hex_) or opensky_state(hex_)
         if pos:
             out["providers"]["identify"] = "hex"
@@ -355,7 +497,9 @@ def main():
             if pos:
                 out["providers"]["identify"] = f"callsign {cs}"
                 break
-    route = prev.get("route")
+    route = fr24_route or prev.get("route")
+    if not route and hist and hist.get("route"):
+        route = hist["route"]
     if not route and sched and sched["origin"].get("lat") is not None and sched["destination"].get("lat") is not None:
         route = {"origin": dict(sched["origin"]), "destination": dict(sched["destination"]), "source": "aviationstack"}
     if not pos and al_icao and number and not route:
@@ -382,6 +526,8 @@ def main():
             a = ap.get(route[k].get("icao") or "")
             if a:
                 route[k]["tz"] = route[k].get("tz") or a.get("tz")
+                route[k]["iata"] = route[k].get("iata") or a.get("iata")
+                route[k]["name"] = route[k].get("name") or a.get("city") or a.get("name")
                 route[k].setdefault("lat", a.get("lat"))
                 route[k].setdefault("lon", a.get("lon"))
         out["providers"]["route"] = route.get("source")
@@ -425,7 +571,17 @@ def main():
             inbound["remaining_nm"] = round(rem_in)
     out["inbound"] = inbound
 
-    track = opensky_track(hex_) if hex_ and pos and not pos.get("ground") else None
+    flying = bool(pos) and not pos.get("ground")
+    track, track_src = None, None
+    done = prev.get("fr24_track_done") or False
+    if flying and fr24_id and not done:
+        track = fr24_track(fr24_id)
+        if track:
+            track_src, done = "fr24 tracks", True
+    if not track and hex_ and flying:
+        track = opensky_track(hex_)
+        track_src = "opensky tracks" if track else None
+    out["fr24_track_done"] = done
     path = prev.get("path") or [] if leg_started else []
     if leg_started:
         if track and track["pts"]:
@@ -433,7 +589,7 @@ def main():
             for p in track["pts"]:
                 merged[round(p[0] / 30)] = p
             path = [merged[k] for k in sorted(merged) if merged[k][0] >= track["start"] - 60]
-            out["providers"]["path"] = "opensky tracks"
+            out["providers"]["path"] = track_src or "tracks"
         if pos and pos.get("lat") is not None:
             p = [pos["pos_time"] or now.timestamp(), pos["lat"], pos["lon"], pos["alt_ft"]]
             if not path or abs(path[-1][0] - p[0]) > 60:
@@ -459,7 +615,9 @@ def main():
     if last and last.get("lat") is not None and dest.get("lat") is not None and leg_started:
         rem = gc_dist_nm(last["lat"], last["lon"], dest["lat"], dest["lon"])
         out["remaining_nm"] = round(rem)
-        if last.get("gs_kt") and last["gs_kt"] > 100:
+        if fr24_eta:
+            out["eta"] = fr24_eta
+        elif last.get("gs_kt") and last["gs_kt"] > 100:
             out["eta"] = (now + timedelta(hours=rem / last["gs_kt"])).isoformat()
         elif prev.get("eta"):
             out["eta"] = prev["eta"]
@@ -474,29 +632,49 @@ def main():
             landed = True
     out["landed_at"] = prev.get("landed_at") or (now.isoformat() if landed else None)
 
+    if hist:
+        out["expected_off"] = hist.get("expected_off")
+        out["block_s"] = hist.get("block_s")
+    if out.get("off_time") and out.get("landed_at"):
+        out["flown_s"] = datetime.fromisoformat(out["landed_at"]).timestamp() - out["off_time"]
+
+    vs = (last or {}).get("vs_fpm") if last else None
+    fresh_pos = bool(pos) or (last and age is not None and age < STALE_POS.total_seconds())
     if landed:
-        phase, status = "arrived", "ARRIVED"
+        phase, status = "landed", "LANDED"
+    elif leg_started and pos and pos.get("ground") and near_dest:
+        phase, status = "landed", "LANDED"
     elif leg_started and pos and pos.get("ground") and near_origin:
-        phase, status = "taxi", "TAXIING"
-    elif leg_started and (pos or (last and age is not None and age < STALE_POS.total_seconds())):
-        phase, status = "airborne", "AIRBORNE"
+        phase, status = "taxi", "TAXI"
+    elif leg_started and fresh_pos:
+        if vs is not None and vs > 300:
+            phase, status = "climb", "CLIMB"
+        elif vs is not None and vs < -300:
+            phase, status = "descent", "DESCENT"
+        else:
+            phase, status = "cruise", "CRUISE"
     elif leg_started:
         phase, status = "airborne", "NO SIGNAL"
     elif pos and pos.get("ground") and near_origin:
-        phase, status = ("taxi", "TAXIING") if (pos.get("gs_kt") or 0) >= 5 else ("planned", "AT GATE")
-        if status == "TAXIING":
+        if (pos.get("gs_kt") or 0) >= 5:
+            phase, status = "taxi", "TAXI"
             leg_started = True
             out["leg_started"] = True
+        else:
+            phase, status = "preparing", "PREPARING"
     elif pos and not pos.get("ground"):
         phase, status = "inbound", "INBOUND"
     elif pos:
-        phase, status = "planned", "ON GROUND"
+        phase, status = "preparing", "ON GROUND"
+    elif route or sched or hist:
+        phase, status = "scheduled", "SCHEDULED"
     else:
-        phase, status = "planned", "PLANNED" if sched else "NOT FOUND"
+        phase, status = "scheduled", "NOT FOUND"
     out["phase"], out["status"] = phase, status
     out["mode"] = "leg"
     json.dump(out, open("data.json", "w"), indent=1)
-    print(status, out["providers"])
+    out["log"] += FR24_LOG
+    print(status, out["providers"], FR24_LOG or "")
 
 
 if __name__ == "__main__":

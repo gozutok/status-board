@@ -12,7 +12,7 @@ on:
         required: false
         default: ""
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "*/5 * * * *"
 
 permissions:
   contents: write
@@ -34,35 +34,60 @@ jobs:
 
       - run: pip install -r requirements.txt
 
+      # Holds the Natural Earth/airport downloads and, since Flightradar24's terms
+      # forbid retaining API-derived data beyond 30 days, the leg state too. Nothing
+      # derived from FR24 is committed to this public repository's permanent history.
       - uses: actions/cache@v4
         with:
           path: .cache
           key: geodata-${{ github.run_number }}
           restore-keys: geodata-
 
-      - if: github.event_name == 'workflow_dispatch'
+      - name: Apply input / restore state
         run: |
-          python3 - <<'PY'
-          import json, datetime, os
-          json.dump({"ident": "${{ github.event.inputs.ident }}".strip(), "reg": "${{ github.event.inputs.reg }}".strip(),
-                     "set_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}, open("config.json", "w"))
-          if os.path.exists("data.json"):
-              os.remove("data.json")
+          mkdir -p .cache
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            python3 - <<'PY'
+          import json, datetime
+          json.dump({"ident": "${{ github.event.inputs.ident }}".strip(),
+                     "reg": "${{ github.event.inputs.reg }}".strip(),
+                     "set_at": datetime.datetime.now(datetime.timezone.utc).isoformat()},
+                    open("config.json", "w"))
           PY
+            rm -f data.json .cache/state.json
+          elif [ -f .cache/state.json ]; then
+            cp .cache/state.json data.json
+          fi
 
-      - env:
-          HOLD_AFTER_ARRIVAL_MIN: "60"
-        run: python3 fetch.py
+      - name: Fetch
+        env:
+          FR24_TOKEN: ${{ secrets.FR24_TOKEN }}
+          HOLD_AFTER_ARRIVAL_MIN: "90"
+        run: |
+          python3 fetch.py
+          cp data.json .cache/state.json
 
-      - env:
+      # render.py once lost its tail to a bad edit and still exited 0, so the
+      # workflow stayed green for hours while the panel showed a stale board.
+      # Treat a render that does not rewrite index.html as a failure.
+      - name: Render
+        env:
           LOCAL_TZ: Europe/Istanbul
           IDLE_ROTATE_MIN: "60"
-        run: python3 render.py
+        run: |
+          started=$(date +%s)
+          python3 render.py
+          mt=$(stat -c %Y index.html 2>/dev/null || echo 0)
+          if [ "$mt" -lt "$started" ]; then
+            echo "::error::render.py exited without rewriting index.html"
+            exit 1
+          fi
 
-      - run: |
+      - name: Commit
+        run: |
           git config user.name "board-bot"
           git config user.email "board-bot@users.noreply.github.com"
-          git add -A board.png index.html config.json data.json idle.json 2>/dev/null || true
+          git add -A board.png index.html config.json idle.json 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "no changes"
           else
