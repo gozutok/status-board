@@ -61,6 +61,10 @@ jobs:
 
       - run: pip install -r requirements.txt
 
+      # py_compile accepts a file whose functions have been deleted out from under
+      # their callers. That happened, and the chain died on it. This does not.
+      - run: python3 check.py fetch.py render.py
+
       # Holds the Natural Earth/airport downloads, and the leg state: Flightradar24
       # forbids retaining API-derived data beyond 30 days, and nothing derived from
       # it is written to this public repository at all any more.
@@ -83,7 +87,6 @@ jobs:
                     open("config.json", "w"))
           PY
             rm -f data.json .cache/state.json
-            cp config.json .cache/config.json
             # The only thing still committed, and it is the user's own input rather
             # than anything from FR24. One commit per leg, not one per update.
             git config user.name "board-bot"
@@ -92,7 +95,6 @@ jobs:
             git diff --cached --quiet || { git commit -q -m "leg $(date -u +%Y-%m-%dT%H:%MZ)"; git push -q; }
           else
             [ -f .cache/state.json ] && cp .cache/state.json data.json
-            [ -f .cache/config.json ] && cp .cache/config.json config.json
             [ -f .cache/idle.json ] && cp .cache/idle.json idle.json
           fi
           true
@@ -151,11 +153,25 @@ jobs:
 
       # A silent failure here freezes the board mid-flight, which is the exact class
       # of bug this project already had once. Fail the job instead of going quiet.
+      # Hand over even when the run failed. A bad deploy used to end the chain
+      # outright, and the board simply stopped until someone looked; five failures
+      # in a row still stop it, so a permanently broken push cannot spin for ever.
       - name: Hand over to the next run
-        if: steps.board.outputs.tracking == '1'
+        if: always() && steps.board.outputs.tracking != '0'
         env:
           DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
         run: |
+          fails=$(cat .cache/fails 2>/dev/null || echo 0)
+          if [ "${{ job.status }}" = "success" ]; then
+            echo 0 > .cache/fails
+          else
+            fails=$((fails + 1)); echo "$fails" > .cache/fails
+            if [ "$fails" -ge 5 ]; then
+              echo "::error::five runs failed in a row; stopping the chain"
+              exit 1
+            fi
+            echo "run failed ($fails in a row) — handing over anyway"
+          fi
           if [ -z "$DISPATCH_TOKEN" ]; then
             echo "::error::DISPATCH_TOKEN is not set, so the chain cannot continue"
             exit 1

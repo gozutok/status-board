@@ -417,6 +417,135 @@ def dead_reckon(last, age_s, off_time, block_s, origin, dest, now):
     return None
 
 
+def fr24_track(fr24_id):
+    """Flown path since departure. Called once per leg, 40 credits."""
+    j = fr24_get("/flight-tracks", {"flight_id": fr24_id})
+    rows = (j or [])
+    if isinstance(rows, dict):
+        rows = rows.get("data") or []
+    pts = []
+    for entry in rows:
+        for p in entry.get("tracks") or []:
+            t = fr24_ts(p.get("timestamp"))
+            if t and p.get("lat") is not None:
+                pts.append([t, p["lat"], p["lon"], p.get("alt")])
+    if not pts:
+        return None
+    pts.sort(key=lambda p: p[0])
+    return {"start": pts[0][0], "pts": pts}
+
+
+def norm_ac(a, feed, now_ms):
+    alt = a.get("alt_baro")
+    ground = alt == "ground"
+    alt_ft = None if ground or alt is None else alt
+    geo = False
+    if alt_ft is None and a.get("alt_geom") is not None and not ground:
+        alt_ft, geo = a["alt_geom"], True
+    seen = a.get("seen_pos")
+    ts = (now_ms / 1000 - (seen or 0)) if now_ms else None
+    return {
+        "hex": (a.get("hex") or "").lower(), "callsign": (a.get("flight") or "").strip(), "reg": a.get("r"),
+        "type": a.get("t"), "lat": a.get("lat"), "lon": a.get("lon"), "alt_ft": alt_ft, "alt_geo": geo,
+        "ground": ground, "gs_kt": a.get("gs"), "track": a.get("track"), "vs_fpm": a.get("baro_rate"),
+        "pos_time": ts, "source": feed,
+    }
+
+
+def feed_lookup(kind, value):
+    for name, base in FEEDS:
+        if kind == "reg" and name in ("adsb.fi", "adsb.one"):
+            continue
+        j = get(f"{base}/{kind}/{value}")
+        ac = (j or {}).get("ac") or []
+        ac = [a for a in ac if a.get("lat") is not None]
+        if ac:
+            ac.sort(key=lambda a: a.get("seen_pos") or 0)
+            return norm_ac(ac[0], name, j.get("now"))
+    return None
+
+
+def opensky_state(hex_):
+    j = get(f"{OPENSKY}/states/all", params={"icao24": hex_})
+    s = ((j or {}).get("states") or [None])[0]
+    if not s or s[6] is None:
+        return None
+    return {
+        "hex": hex_, "callsign": (s[1] or "").strip(), "reg": None, "type": None, "lat": s[6], "lon": s[5],
+        "alt_ft": round(s[7] * 3.28084) if s[7] is not None else (round(s[13] * 3.28084) if s[13] is not None else None),
+        "alt_geo": s[7] is None and s[13] is not None, "ground": bool(s[8]),
+        "gs_kt": round(s[9] * 1.94384) if s[9] is not None else None, "track": s[10],
+        "vs_fpm": round(s[11] * 196.85) if s[11] is not None else None, "pos_time": s[3], "source": "opensky",
+    }
+
+
+def opensky_track(hex_):
+    j = get(f"{OPENSKY}/tracks/all", params={"icao24": hex_, "time": 0})
+    if not j or not j.get("path"):
+        return None
+    raw = [p for p in j["path"] if p[1] is not None]
+    cut = 0
+    for i, p in enumerate(raw):
+        if p[5] or (p[3] is not None and p[3] < 60):
+            cut = i
+        elif i > 0 and p[0] - raw[i - 1][0] > 1200 and (raw[i - 1][3] is None or raw[i - 1][3] < 1000):
+            cut = i
+    for i in range(len(raw) - 1, 0, -1):
+        if raw[i][0] - raw[i - 1][0] > 1800:
+            cut = max(cut, i)
+            break
+    raw = raw[cut:]
+    return {"start": raw[0][0] if raw else None, "end": j.get("endTime"),
+            "pts": [[p[0], p[1], p[2], round(p[3] * 3.28084) if p[3] is not None else None] for p in raw]}
+
+
+def route_for_callsign(callsign, lat=None, lon=None):
+    j = get(f"{ADSBDB}/callsign/{callsign}")
+    resp = (j or {}).get("response") if isinstance(j, dict) else None
+    fr = resp.get("flightroute") if isinstance(resp, dict) else None
+    if fr and fr.get("origin") and fr.get("destination"):
+        o, d = fr["origin"], fr["destination"]
+        return {"origin": {"icao": o.get("icao_code"), "iata": o.get("iata_code"), "lat": o.get("latitude"), "lon": o.get("longitude"), "name": o.get("municipality") or o.get("name")},
+                "destination": {"icao": d.get("icao_code"), "iata": d.get("iata_code"), "lat": d.get("latitude"), "lon": d.get("longitude"), "name": d.get("municipality") or d.get("name")},
+                "source": "adsbdb"}
+    rs = post(ROUTESET, {"planes": [{"callsign": callsign, "lat": lat or 0, "lng": lon or 0}]})
+    try:
+        aps = rs[0]["_airports"]
+        if len(aps) >= 2:
+            o, d = aps[0], aps[-1]
+            return {"origin": {"icao": o.get("icao"), "iata": o.get("iata"), "lat": o.get("lat"), "lon": o.get("lon"), "name": o.get("location") or o.get("name")},
+                    "destination": {"icao": d.get("icao"), "iata": d.get("iata"), "lat": d.get("lat"), "lon": d.get("lon"), "name": d.get("location") or d.get("name")},
+                    "source": "adsb.lol routeset"}
+    except Exception:
+        pass
+    return None
+
+
+def search_by_route(icao_prefix, route):
+    o, d = route["origin"], route["destination"]
+    if o.get("lat") is None or d.get("lat") is None:
+        return None
+    centers = [gc_point(o["lat"], o["lon"], d["lat"], d["lon"], f) for f in (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)]
+    seen, cands = set(), []
+    for lat, lon in centers:
+        j = get(f"https://api.adsb.lol/v2/point/{lat:.3f}/{lon:.3f}/250")
+        for a in (j or {}).get("ac") or []:
+            cs = (a.get("flight") or "").strip()
+            if cs.startswith(icao_prefix) and a.get("hex") not in seen and a.get("lat") is not None:
+                seen.add(a["hex"])
+                cands.append((a, j.get("now")))
+    if not cands:
+        return None
+    rs = post(ROUTESET, {"planes": [{"callsign": (a.get("flight") or "").strip(), "lat": a["lat"], "lng": a["lon"]} for a, _ in cands]}) or []
+    pair = {o.get("icao"), d.get("icao")}
+    for a, now_ms in cands:
+        cs = (a.get("flight") or "").strip()
+        for r in rs:
+            if r.get("callsign") == cs and set((r.get("airport_codes") or "").split("-")) == pair and a.get("alt_baro") != "ground":
+                return norm_ac(a, "adsb.lol", now_ms)
+    return None
+
+
 def main():
     now = now_utc()
     cfg = json.load(open("config.json")) if os.path.exists("config.json") else {}
