@@ -32,7 +32,10 @@ permissions:
 
 concurrency:
   group: board
-  cancel-in-progress: true
+  # A handover must not cancel the run it is relieving: that run is in its teardown,
+  # and the cache post-step it is still running is what carries the leg state to the
+  # next link. Setting a new flight, though, should take over at once.
+  cancel-in-progress: ${{ github.event.inputs.chain != '1' }}
 
 env:
   # Pages caps freshness at ten minutes whatever we do, and its soft limit is ten
