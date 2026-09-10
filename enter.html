@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Board control</title>
+<style>
+body{font-family:-apple-system,system-ui,sans-serif;background:#111;color:#eee;margin:0;padding:20px;max-width:480px;margin:auto}
+h1{font-size:20px;margin:8px 0 16px}
+label{display:block;font-size:13px;color:#aaa;margin:14px 0 4px}
+input{width:100%;box-sizing:border-box;font-size:22px;padding:12px;border:1px solid #444;border-radius:8px;background:#222;color:#fff;text-transform:uppercase}
+input#token{text-transform:none;font-size:14px}
+button{width:100%;font-size:18px;padding:14px;border:0;border-radius:8px;margin-top:12px;color:#fff;background:#2b7a3d}
+button.stop{background:#7a2b2b}
+button.plain{background:#333}
+#msg{margin-top:14px;font-size:14px;min-height:20px;color:#9d9}
+#msg.err{color:#f88}
+#status{margin-top:20px;font-size:13px;color:#aaa;white-space:pre-line}
+img{width:100%;margin-top:12px;border:1px solid #333;background:#fff}
+details{margin-top:24px;font-size:13px;color:#aaa}
+</style>
+</head>
+<body>
+<h1>Board control</h1>
+<label>Ident</label>
+<input id="ident" placeholder="XX123" autocapitalize="characters">
+<label>Registration (optional, most reliable)</label>
+<input id="reg" placeholder="XX-XXX" autocapitalize="characters">
+<button id="start">Start</button>
+<button id="stop" class="stop">Stop / photos</button>
+<div id="msg"></div>
+<div id="status"></div>
+<img id="preview" alt="">
+<details>
+<summary>Token</summary>
+<label>GitHub fine-grained token (stored only in this browser)</label>
+<input id="token" placeholder="github_pat_…">
+<button id="save" class="plain">Save token</button>
+</details>
+<script>
+const OWNER="gozutok",REPO="status-board",WF="board.yml";
+const $=id=>document.getElementById(id);
+const tok=()=>localStorage.getItem("gh_token")||"";
+$("token").value=tok();
+$("save").onclick=()=>{localStorage.setItem("gh_token",$("token").value.trim());say("Token saved");};
+function say(t,err){$("msg").textContent=t;$("msg").className=err?"err":"";}
+async function dispatch(ident,reg){
+  if(!tok()){say("Token missing — open Token below",true);return;}
+  const r=await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/${WF}/dispatches`,{
+    method:"POST",headers:{"Authorization":"Bearer "+tok(),"Accept":"application/vnd.github+json","Content-Type":"application/json"},
+    body:JSON.stringify({ref:"main",inputs:{ident:ident,reg:reg}})});
+  if(r.status===204){say(ident?`Sent: ${ident} ${reg}. Board updates in 1–2 min, panel on its next refresh.`:"Stopped. Photos resume on next run.");}
+  else{say("GitHub error "+r.status+" — check token scope (Actions: read and write)",true);}
+}
+$("start").onclick=()=>dispatch($("ident").value.trim().toUpperCase(),$("reg").value.trim().toUpperCase());
+$("stop").onclick=()=>dispatch("","");
+async function refresh(){
+  try{const d=await (await fetch("data.json?t="+Date.now())).json();
+    $("status").textContent=d.mode==="leg"?`Tracking ${d.ident||""} · ${d.status||""} · ${d.callsign||""} ${d.reg||""}\n${JSON.stringify(d.providers||{})}\nupdated ${d.generated||""}`:"Idle (photos)";
+    if(d.mode==="leg"&&d.ident)$("ident").value=d.ident;}catch(e){}
+  $("preview").src="board.png?t="+Date.now();
+}
+refresh();
+</script>
+</body>
+</html>

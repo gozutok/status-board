@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Cache-Control" content="no-store">
+<title>board</title>
+<style>
+html,body{margin:0;padding:0;width:100%;height:100%;background:#fff;overflow:hidden}
+#stage{position:absolute;left:0;top:0;width:800px;height:480px;transform-origin:0 0}
+#stage img{display:block;width:800px;height:480px;image-rendering:pixelated}
+</style>
+</head>
+<body>
+<div id="stage"><img id="b" src="board.png" width="800" height="480"></div>
+<script>
+function fit(){
+  var w=window.innerWidth||800,h=window.innerHeight||480;
+  var s=Math.min(w/800,h/480);
+  var st=document.getElementById("stage");
+  st.style.transform="translate("+Math.round((w-800*s)/2)+"px,"+Math.round((h-480*s)/2)+"px) scale("+s+")";
+}
+fit();
+window.addEventListener("resize",fit);
+document.getElementById("b").src="board.png?t="+Date.now();
+</script>
+</body>
+</html>
