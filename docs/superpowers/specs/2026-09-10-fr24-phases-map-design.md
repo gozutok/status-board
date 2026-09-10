@@ -69,12 +69,12 @@ vertical-speed split and two pre-departure states.
 |---|---|---|---|
 | `scheduled` | SCHEDULED | ident set, nothing found yet | whole route, dotted |
 | `preparing` | PREPARING | transponder on, at origin, GS < 5 | origin, 100 NM |
-| `taxi` | TAXI | at origin, GS >= 5 | origin, 100 NM |
+| `taxi` | TAXI | at origin, GS >= 5 | origin, 400 NM |
 | `climb` | CLIMB | airborne, V/S > +300 fpm | aircraft-centred |
 | `cruise` | CRUISE | airborne, abs(V/S) <= 300 fpm | aircraft-centred |
 | `descent` | DESCENT | airborne, V/S < -300 fpm | aircraft-centred |
 | `airborne` | NO SIGNAL | position older than 45 min | last known |
-| `landed` | LANDED | on ground near destination | destination, 100 NM |
+| `landed` | LANDED | on ground near destination | destination, 400 NM |
 | `inbound` | INBOUND | aircraft still flying its previous leg | inbound route |
 
 Right-hand column by phase:
