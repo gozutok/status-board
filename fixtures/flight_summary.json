@@ -1,0 +1,18 @@
+{
+ "callsign": "SAS1415",
+ "datetime_landed": "2023-01-27T06:15:10",
+ "datetime_takeoff": "2023-01-27T05:15:22",
+ "dest_icao": "EKCH",
+ "dest_icao_actual": "EPWA",
+ "first_seen": "2023-01-27T05:06:22",
+ "flight": "SK1415",
+ "flight_ended": "false",
+ "fr24_id": "380ce8ef",
+ "hex": "4A91F9",
+ "last_seen": "2023-01-27T06:18:10",
+ "operating_as": "SAS",
+ "orig_icao": "ESSA",
+ "painted_as": "SAS",
+ "reg": "SE-DOY",
+ "type": "A20N"
+}

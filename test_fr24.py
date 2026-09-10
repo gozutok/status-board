@@ -16,7 +16,6 @@ import sys
 import fetch
 
 CALLS = []
-FIXTURE = os.path.join("fixtures", "live_position.json")
 
 
 def stub(rows_for):
@@ -66,14 +65,44 @@ def main():
                                                 [(c, next(k for k in q if k in ("registrations", "flights", "callsigns")))
                                                  for c, q in CALLS]}), 1)
 
-    if os.path.exists(FIXTURE):
-        row = json.load(open(FIXTURE, encoding="utf-8"))
+    # Everything below parses responses Flightradar24 actually sent, captured from
+    # the sandbox — which returns the production schema — rather than rows written
+    # here from the specification, which would only ever have agreed with itself.
+    def fixture(name):
+        path = os.path.join("fixtures", name + ".json")
+        return json.load(open(path, encoding="utf-8")) if os.path.exists(path) else None
+
+    row = fixture("live_position")
+    if row:
         fetch.fr24_get = lambda path, params: {"data": [row]}
         got = fetch.fr24_position((row.get("flight") or "").upper(), "")
-        good &= check("kayitli yanit ayristiriliyor", got["pos"]["lat"], row["lat"])
-        good &= check("kayitli yanitta rota", bool(got["route"]), bool(row.get("dest_icao")))
+        good &= check("kayitli konum ayristi", got["pos"]["lat"], row["lat"])
+        good &= check("kaynak okundu", got["pos"]["source"], "fr24 " + row["source"].lower())
+        good &= check("rota okundu", got["route"]["destination"]["icao"], row["dest_icao"])
+        good &= check("zaman damgasi cozuldu", got["pos"]["pos_time"] > 0, True)
     else:
-        print(f"  ATLA  {FIXTURE} yok — ayristirma testi gercek yanit kaydedilince acilacak")
+        print("  ATLA  fixtures/live_position.json yok")
+
+    row = fixture("flight_summary")
+    if row:
+        fetch.fr24_get = lambda path, params: {"data": [row]}
+        import datetime as _dt
+        t = fetch.fr24_ts(row["datetime_takeoff"])
+        now = _dt.datetime.fromtimestamp(t + 3600, _dt.timezone.utc)
+        hist = fetch.fr24_history((row.get("flight") or "").upper(), now)
+        good &= check("flight_ended metni cozuldu", bool(hist and hist.get("current")), True)
+        if hist and hist.get("current"):
+            good &= check("havadaki bacagin kimligi", hist["current"]["fr24_id"], row["fr24_id"])
+
+    trk = fixture("flight_tracks")
+    if trk:
+        fetch.fr24_get = lambda path, params: trk
+        got = fetch.fr24_track(trk[0]["fr24_id"])
+        pts = trk[0]["tracks"]
+        good &= check("iz noktalari okundu", len(got["pts"]), len(pts))
+        good &= check("hiz turetilmiyor, okunuyor", got["last"]["gs"], pts[-1]["gspeed"])
+        good &= check("yon turetilmiyor, okunuyor", got["last"]["track"], pts[-1]["track"])
+        good &= check("dikey hiz okunuyor", got["last"]["vs"], pts[-1]["vspeed"])
 
     print("PASS" if good else "FAIL")
     return 0 if good else 1

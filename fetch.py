@@ -317,8 +317,8 @@ def fr24_history(ident, now):
     live = None
     for r in rows:
         t = fr24_ts(r.get("datetime_takeoff"))
-        ended = r.get("flight_ended")
-        if t and (ended is False or not r.get("datetime_landed")) and 0 < now.timestamp() - t < 20 * 3600:
+        ended = str(r.get("flight_ended")).strip().lower() in ("true", "1")
+        if t and (not ended or not r.get("datetime_landed")) and 0 < now.timestamp() - t < 20 * 3600:
             if live is None or t > live["off"]:
                 live = {"fr24_id": r.get("fr24_id"), "off": t, "reg": r.get("reg"),
                         "type": r.get("type"), "callsign": r.get("callsign"),
@@ -439,16 +439,20 @@ def fr24_track(fr24_id):
     rows = (j or [])
     if isinstance(rows, dict):
         rows = rows.get("data") or []
-    pts = []
+    pts, last = [], None
     for entry in rows:
         for p in entry.get("tracks") or []:
             t = fr24_ts(p.get("timestamp"))
             if t and p.get("lat") is not None:
                 pts.append([t, p["lat"], p["lon"], p.get("alt")])
+                if last is None or t > last["t"]:
+                    last = {"t": t, "track": p.get("track"), "gs": p.get("gspeed"),
+                            "vs": p.get("vspeed"), "callsign": p.get("callsign"),
+                            "source": p.get("source")}
     if not pts:
         return None
     pts.sort(key=lambda p: p[0])
-    return {"start": pts[0][0], "pts": pts}
+    return {"start": pts[0][0], "pts": pts, "last": last}
 
 
 def norm_ac(a, feed, now_ms):
@@ -702,32 +706,16 @@ def main():
         pts = (tr or {}).get("pts") or []
         if pts:
             p0 = pts[-1]
-            # Two adjacent fixes can be seconds and a rounding apart, which turns
-            # into a ground speed of hundreds of knots either way. Walk back for a
-            # gap wide enough to average over.
-            prev_p = None
-            for q in reversed(pts[:-1]):
-                if p0[0] - q[0] >= 180:
-                    prev_p = q
-                    break
-            brg = None
-            if prev_p and (prev_p[1], prev_p[2]) != (p0[1], p0[2]):
-                brg = math.degrees(math.atan2(
-                    math.sin(math.radians(p0[2] - prev_p[2])) * math.cos(math.radians(p0[1])),
-                    math.cos(math.radians(prev_p[1])) * math.sin(math.radians(p0[1]))
-                    - math.sin(math.radians(prev_p[1])) * math.cos(math.radians(p0[1]))
-                    * math.cos(math.radians(p0[2] - prev_p[2])))) % 360
-            gs = None
-            if prev_p and p0[0] > prev_p[0]:
-                gs = round(gc_dist_nm(prev_p[1], prev_p[2], p0[1], p0[2]) / ((p0[0] - prev_p[0]) / 3600))
-                if not 60 <= gs <= 620:
-                    gs = None
-            pos = {"hex": (hex_ or ""), "callsign": cur.get("callsign") or "", "reg": cur.get("reg"),
-                   "type": cur.get("type"), "lat": p0[1], "lon": p0[2],
+            fin = tr.get("last") or {}
+            gs, brg, vs = fin.get("gs"), fin.get("track"), fin.get("vs")
+            src = (fin.get("source") or "").upper()
+            pos = {"hex": (hex_ or ""), "callsign": fin.get("callsign") or cur.get("callsign") or "",
+                   "reg": cur.get("reg"), "type": cur.get("type"), "lat": p0[1], "lon": p0[2],
                    "alt_ft": p0[3], "alt_geo": False,
                    "ground": (gs or 0) < 40 and (p0[3] or 0) < 15000,
-                   "gs_kt": gs, "track": brg, "vs_fpm": None,
-                   "pos_time": p0[0], "source": "fr24 tracks"}
+                   "gs_kt": gs, "track": brg, "vs_fpm": vs,
+                   "estimated": src == "ESTIMATED",
+                   "pos_time": p0[0], "source": ("fr24 tracks " + src.lower()).strip()}
             fr24_id = cur["fr24_id"]
             fr24_is_leg = True
             out["providers"]["identify"] = "fr24 summary"

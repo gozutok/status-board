@@ -1,0 +1,43 @@
+[
+ {
+  "fr24_id": "35dc6f7d",
+  "tracks": [
+   {
+    "alt": 3750,
+    "callsign": "THY5LK",
+    "gspeed": 212,
+    "lat": 55.54876,
+    "lon": 37.13967,
+    "source": "MLAT",
+    "squawk": "5377",
+    "timestamp": "2024-06-18T10:32:02Z",
+    "track": 246,
+    "vspeed": 2816
+   },
+   {
+    "alt": 4150,
+    "callsign": "THY5LK",
+    "gspeed": 215,
+    "lat": 55.54722,
+    "lon": 37.12818,
+    "source": "MLAT",
+    "squawk": "5377",
+    "timestamp": "2024-06-18T10:32:08Z",
+    "track": 254,
+    "vspeed": 2560
+   },
+   {
+    "alt": 4675,
+    "callsign": "THY5LK",
+    "gspeed": 215,
+    "lat": 55.54474,
+    "lon": 37.10452,
+    "source": "MLAT",
+    "squawk": "5377",
+    "timestamp": "2024-06-18T10:32:22Z",
+    "track": 254,
+    "vspeed": 2560
+   }
+  ]
+ }
+]
