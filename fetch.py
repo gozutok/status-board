@@ -478,6 +478,42 @@ def search_by_route(icao_prefix, route):
     return None
 
 
+def backtest_dr(pts, dest, block_s, origin):
+    """Measure the extrapolation against the track it came from.
+
+    Takes a fix an hour before the end, guesses forward from it by exactly the rule
+    the board uses, and compares with where the aircraft actually was. Costs
+    nothing — the track is already paid for — and turns "is the estimate any good"
+    into a number instead of an opinion.
+    """
+    if not pts or len(pts) < 4 or dest.get("lat") is None:
+        return None
+    end = pts[-1]
+    past = None
+    for q in reversed(pts[:-1]):
+        if end[0] - q[0] >= 3600:
+            past = q
+            break
+    if past is None:
+        return None
+    before = None
+    for q in reversed([x for x in pts if x[0] <= past[0]][:-1]):
+        if past[0] - q[0] >= 180:
+            before = q
+            break
+    gs = None
+    if before and past[0] > before[0]:
+        gs = gc_dist_nm(before[1], before[2], past[1], past[2]) / ((past[0] - before[0]) / 3600)
+        if not 60 <= gs <= 620:
+            gs = None
+    guess = dead_reckon({"lat": past[1], "lon": past[2], "gs_kt": gs}, end[0] - past[0],
+                        None, block_s, origin, dest, None)
+    if not guess:
+        return None
+    return {"gap_min": round((end[0] - past[0]) / 60),
+            "err_nm": round(gc_dist_nm(guess["lat"], guess["lon"], end[1], end[2]))}
+
+
 def dead_reckon(last, age_s, off_time, block_s, origin, dest, now):
     """Where the aircraft should be, when the last real fix has gone stale.
 
@@ -499,7 +535,7 @@ def dead_reckon(last, age_s, off_time, block_s, origin, dest, now):
         f = min(gs * (age_s / 3600) / left, 0.98)
         lat, lon = gc_point(last["lat"], last["lon"], dest["lat"], dest["lon"], f)
         return {"lat": lat, "lon": lon, "from_s": age_s, "anchor": "fix"}
-    if off_time and block_s and origin.get("lat") is not None:
+    if off_time and block_s and now is not None and origin.get("lat") is not None:
         f = min(max((now.timestamp() - off_time) / block_s, 0.0), 0.98)
         lat, lon = gc_point(origin["lat"], origin["lon"], dest["lat"], dest["lon"], f)
         return {"lat": lat, "lon": lon, "from_s": now.timestamp() - off_time, "anchor": "off"}
@@ -791,6 +827,10 @@ def main():
                           origin, dest, now)
         if est:
             out["est_pos"] = est
+            bt = backtest_dr(out.get("path") or [], dest,
+                             out.get("block_s") or (hist or {}).get("block_s"), origin)
+            if bt:
+                out["log"].append(f"dead reckon backtest: {bt['err_nm']} NM over {bt['gap_min']} min")
 
     ref = out.get("est_pos") or last
     if ref and ref.get("lat") is not None and dest.get("lat") is not None and leg_started:
