@@ -224,7 +224,8 @@ def fr24_position(ident, reg, callsign=None):
         queries.append({"callsigns": callsign})
     rows = []
     for q in queries:
-        j = fr24_get("/live/flight-positions/full", dict(q, limit=5))
+        j = fr24_get("/live/flight-positions/full",
+                     dict(q, limit=5, data_sources="ADSB,MLAT,ESTIMATED,UAT"))
         rows = [x for x in (j or {}).get("data") or [] if x.get("lat") is not None]
         if rows:
             break
@@ -276,10 +277,20 @@ def fr24_history(ident, now):
             last_row = r
         if t and l and 0 < l - t < 20 * 3600:
             blocks.append(l - t)
+    live = None
+    for r in rows:
+        t = fr24_ts(r.get("datetime_takeoff"))
+        ended = r.get("flight_ended")
+        if t and (ended is False or not r.get("datetime_landed")) and 0 < now.timestamp() - t < 20 * 3600:
+            if live is None or t > live["off"]:
+                live = {"fr24_id": r.get("fr24_id"), "off": t, "reg": r.get("reg"),
+                        "type": r.get("type"), "callsign": r.get("callsign"),
+                        "orig": r.get("orig_icao"), "dest": r.get("dest_icao_actual") or r.get("dest_icao")}
     if not offs:
-        return None
+        return {"source": "fr24 history", "tod": None, "block_s": None, "samples": 0,
+                "current": live} if live else None
     offs.sort(); blocks.sort()
-    out = {"source": "fr24 history", "tod": offs[len(offs) // 2],
+    out = {"source": "fr24 history", "tod": offs[len(offs) // 2], "current": live,
            "block_s": blocks[len(blocks) // 2] if blocks else None, "samples": len(offs)}
     if last_row and last_row.get("orig_icao") and last_row.get("dest_icao"):
         out["route"] = {"origin": {"icao": last_row["orig_icao"]}, "destination": {"icao": last_row["dest_icao"]},
@@ -544,6 +555,7 @@ def main():
     fr24_is_leg = False
 
     fr24_inbound_route = None
+    track_pts_seed = None
     if FR24_TOKEN:
         got = fr24_position(ident, reg, f"{al_icao}{number}" if al_icao and number else None)
         if got:
@@ -556,6 +568,38 @@ def main():
             else:
                 fr24_inbound_route = got["route"]
             out["providers"]["identify"] = "fr24 " + ("registration" if reg else "flight number")
+    # Three live filters can all miss a flight FR24 is plainly tracking. The leg is
+    # still reachable another way: flight-summary names the one in the air right now,
+    # and its track ends at the aircraft's current position. Slower and dearer than a
+    # live fix, so only when the live fix is not there.
+    if not pos and (hist or {}).get("current", {}).get("fr24_id"):
+        cur = hist["current"]
+        tr = fr24_track(cur["fr24_id"])
+        pts = (tr or {}).get("pts") or []
+        if pts:
+            p0 = pts[-1]
+            prev_p = pts[-2] if len(pts) > 1 else None
+            brg = None
+            if prev_p and (prev_p[1], prev_p[2]) != (p0[1], p0[2]):
+                brg = math.degrees(math.atan2(
+                    math.sin(math.radians(p0[2] - prev_p[2])) * math.cos(math.radians(p0[1])),
+                    math.cos(math.radians(prev_p[1])) * math.sin(math.radians(p0[1]))
+                    - math.sin(math.radians(prev_p[1])) * math.cos(math.radians(p0[1]))
+                    * math.cos(math.radians(p0[2] - prev_p[2])))) % 360
+            gs = None
+            if prev_p and p0[0] > prev_p[0]:
+                gs = round(gc_dist_nm(prev_p[1], prev_p[2], p0[1], p0[2]) / ((p0[0] - prev_p[0]) / 3600))
+            pos = {"hex": (hex_ or ""), "callsign": cur.get("callsign") or "", "reg": cur.get("reg"),
+                   "type": cur.get("type"), "lat": p0[1], "lon": p0[2],
+                   "alt_ft": p0[3], "alt_geo": False,
+                   "ground": (gs or 0) < 40 and (p0[3] or 0) < 15000,
+                   "gs_kt": gs, "track": brg, "vs_fpm": None,
+                   "pos_time": p0[0], "source": "fr24 tracks"}
+            fr24_id = cur["fr24_id"]
+            fr24_is_leg = True
+            out["providers"]["identify"] = "fr24 summary"
+            out["fr24_track_done"] = True
+            track_pts_seed = pts
     if not pos and hex_:
         pos = feed_lookup("hex", hex_) or opensky_state(hex_)
         if pos:
@@ -663,7 +707,9 @@ def main():
     flying = bool(pos) and not pos.get("ground")
     track, track_src = None, None
     done = prev.get("fr24_track_done") or False
-    if flying and fr24_id and not done:
+    if track_pts_seed:
+        track, track_src, done = {"start": track_pts_seed[0][0], "pts": track_pts_seed}, "fr24 tracks", True
+    elif flying and fr24_id and not done:
         track = fr24_track(fr24_id)
         if track:
             track_src, done = "fr24 tracks", True
