@@ -234,12 +234,19 @@ def esc(s):
     return html.escape(str(s if s is not None else ""), quote=True)
 
 
+def fmt_ts(ts, tz):
+    return local(ts, tz) if ts else "--:--"
+
+
 def svg_leg(dt, now):
     route = dt.get("route") or {}
     o, dest = route.get("origin") or {}, route.get("destination") or {}
+    sched = dt.get("sched") or {}
     last = dt.get("last_pos") or {}
     path = dt.get("path") or []
+    phase = dt.get("phase") or "airborne"
     status = dt.get("status") or ""
+    inbound = dt.get("inbound") or {}
     o_code, d_code = o.get("iata") or o.get("icao") or "???", dest.get("iata") or dest.get("icao") or "???"
     lat, lon = last.get("lat"), last.get("lon")
     box = (0, 72, 470, 400)
@@ -250,17 +257,28 @@ def svg_leg(dt, now):
              f'<text x="16" y="35" font-size="44" font-weight="700" fill="#fff" dominant-baseline="central">{esc(dt.get("ident") or dt.get("callsign"))}</text>',
              f'<text x="215" y="35" font-size="40" font-weight="700" fill="#fff" dominant-baseline="central">{esc(o_code)} \u2192 {esc(d_code)}</text>',
              f'<text x="{W - 16}" y="22" font-size="28" font-weight="700" fill="#fff" text-anchor="end" dominant-baseline="central">{esc(status)}</text>']
-    sub = " \u00b7 ".join(x for x in [dt.get("type"), dt.get("reg"), dt.get("callsign")] if x)
+    sub = " \u00b7 ".join(x for x in [dt.get("type"), dt.get("reg"), dt.get("callsign") if phase in ("airborne", "taxi", "arrived") else None] if x)
     parts.append(f'<text x="{W - 16}" y="52" font-size="18" fill="#fff" text-anchor="end" dominant-baseline="central">{esc(sub)}</text>')
 
-    have_dest = dest.get("lat") is not None
-    pts_path = [(p[1], p[2]) for p in path if p[1] is not None]
-    if lat is not None or pts_path or (o.get("lat") is not None and have_dest):
-        lats = [p[0] for p in pts_path] + ([lat] if lat is not None else []) + [x["lat"] for x in (o, dest) if x.get("lat") is not None]
-        lons = [p[1] for p in pts_path] + ([lon] if lon is not None else []) + [x["lon"] for x in (o, dest) if x.get("lon") is not None]
-        rem = gc_line((lat, lon), (dest["lat"], dest["lon"])) if lat is not None and have_dest else []
-        lats += [p[0] for p in rem]
-        lons += [p[1] for p in rem]
+    show_ac = lat is not None and phase != "planned" or (phase == "planned" and lat is not None and status == "AT GATE")
+    pts_path = [(p[1], p[2]) for p in path if p[1] is not None] if phase in ("airborne", "taxi", "arrived") else []
+    in_path = [(p[1], p[2]) for p in (dt.get("inbound_path") or []) if p[1] is not None] if phase == "inbound" else []
+    in_route = (inbound.get("route") or {}) if phase == "inbound" else {}
+    have_o, have_d = o.get("lat") is not None, dest.get("lat") is not None
+    if have_o and have_d or lat is not None:
+        lats, lons = [], []
+        for pt in pts_path + in_path:
+            lats.append(pt[0]); lons.append(pt[1])
+        for x in (o, dest, in_route.get("origin") or {}):
+            if x.get("lat") is not None:
+                lats.append(x["lat"]); lons.append(x["lon"])
+        if lat is not None and (phase != "planned" or status == "AT GATE"):
+            lats.append(lat); lons.append(lon)
+        plan = gc_line((o["lat"], o["lon"]), (dest["lat"], dest["lon"])) if have_o and have_d else []
+        rem = gc_line((lat, lon), (dest["lat"], dest["lon"])) if phase == "airborne" and lat is not None and have_d else []
+        in_rem = gc_line((lat, lon), (o["lat"], o["lon"])) if phase == "inbound" and lat is not None and have_o else []
+        for p in plan + rem + in_rem:
+            lats.append(p[0]); lons.append(p[1])
         view = MapView(box, lats, lons)
         parts.append(f'<clipPath id="m"><rect x="{box[0]}" y="{box[1]}" width="{view.pw}" height="{view.ph}"/></clipPath><g clip-path="url(#m)">')
         d = []
@@ -273,11 +291,25 @@ def svg_leg(dt, now):
                     if len(pts) > 2:
                         d.append("M" + " L".join(f"{x:.1f},{y:.1f}" for x, y in pts) + "Z")
         parts.append(f'<path d="{" ".join(d)}" fill="#fff" stroke="#000" stroke-width="1"/>')
+
+        def pl(pts, width, dash=None):
+            return ('<polyline points="' + " ".join(f"{x:.1f},{y:.1f}" for x, y in (view.xy(*p) for p in pts)) +
+                    f'" fill="none" stroke="#000" stroke-width="{width}" stroke-linejoin="round"' + (f' stroke-dasharray="{dash}"' if dash else "") + "/>")
+
+        if phase in ("planned", "taxi", "inbound") and plan:
+            parts.append(pl(plan, 2, "6 6"))
         if rem:
-            parts.append('<polyline points="' + " ".join(f"{x:.1f},{y:.1f}" for x, y in (view.xy(*p) for p in rem)) + '" fill="none" stroke="#000" stroke-width="2" stroke-dasharray="6 6"/>')
+            parts.append(pl(rem, 2, "6 6"))
+        if in_rem:
+            parts.append(pl(in_rem, 2, "3 5"))
         if len(pts_path) > 1:
-            parts.append('<polyline points="' + " ".join(f"{x:.1f},{y:.1f}" for x, y in (view.xy(*p) for p in pts_path)) + '" fill="none" stroke="#000" stroke-width="4" stroke-linejoin="round"/>')
-        for ap, code in ((o, o_code), (dest, d_code)):
+            parts.append(pl(pts_path, 4))
+        if len(in_path) > 1:
+            parts.append(pl(in_path, 3))
+        marks = [(o, o_code), (dest, d_code)]
+        if in_route.get("origin", {}).get("lat") is not None:
+            marks.append((in_route["origin"], in_route["origin"].get("iata") or in_route["origin"].get("icao") or ""))
+        for ap, code in marks:
             if ap.get("lat") is None:
                 continue
             x, y = view.xy(ap["lat"], ap["lon"])
@@ -286,7 +318,7 @@ def svg_leg(dt, now):
                 parts.append(f'<text x="{x - 10:.1f}" y="{y + 24:.1f}" font-size="20" font-weight="700" text-anchor="end">{esc(code)}</text>')
             else:
                 parts.append(f'<text x="{x + 10:.1f}" y="{y + 24:.1f}" font-size="20" font-weight="700">{esc(code)}</text>')
-        if lat is not None:
+        if lat is not None and (phase != "planned" or status == "AT GATE"):
             x, y = view.xy(lat, lon)
             s = 15
             parts.append(f'<g transform="translate({x:.1f},{y:.1f}) rotate({float(last.get("track") or 0):.0f})">'
@@ -294,81 +326,9 @@ def svg_leg(dt, now):
                          f'<circle r="{s + 4}" fill="none" stroke="#000" stroke-width="2"/></g>')
         parts.append('</g>')
     else:
-        parts.append(f'<text x="{(box[0] + box[2]) // 2}" y="{(box[1] + box[3]) // 2}" font-size="24" text-anchor="middle" dominant-baseline="central">Waiting for first position</text>')
+        parts.append(f'<text x="{(box[0] + box[2]) // 2}" y="{(box[1] + box[3]) // 2}" font-size="24" text-anchor="middle" dominant-baseline="central">{"Waiting for schedule" if not route else "Waiting for first position"}</text>')
     parts.append(f'<rect x="{box[0] + 0.5}" y="{box[1] + 0.5}" width="{box[2] - box[0] - 1}" height="{box[3] - box[1] - 1}" fill="none" stroke="#000"/>')
 
     x = 486
-    off = dt.get("off_time")
-    since = now.timestamp() - off if off else None
-    eta = dt.get("eta")
-    togo = (datetime.fromisoformat(eta) - now).total_seconds() if eta and status != "ARRIVED" else None
-    total = (since or 0) + (togo or 0)
-    frac = 1.0 if status == "ARRIVED" else (since / total if since and total else 0.0)
-    gs, alt, vs, trk = last.get("gs_kt"), last.get("alt_ft"), last.get("vs_fpm"), last.get("track")
-    age = dt.get("pos_age_s")
-    age_txt = (f"{int(age // 60)} min" if age >= 60 else f"{int(age)} s") if age is not None else ""
-
-    def lab(px, py, t):
-        return f'<text x="{px}" y="{py}" font-size="16" fill="#000">{esc(t)}</text>'
-
-    def big(px, py, t, size=34):
-        return f'<text x="{px}" y="{py}" font-size="{size}" font-weight="700">{esc(t)}</text>'
-
-    parts += [lab(x, 91, "SINCE OFF"), big(x, 134, hm(since), 44), lab(x + 152, 91, "TO GO est"), big(x + 152, 134, hm(togo), 44),
-              f'<rect x="{x + 1}" y="159" width="{W - 16 - x - 2}" height="14" fill="none" stroke="#000" stroke-width="2"/>',
-              f'<rect x="{x}" y="158" width="{int((W - 16 - x) * frac)}" height="16" fill="#000"/>',
-              f'<text x="{x}" y="196" font-size="17">OFF {esc(local(off, o.get("tz")))} {esc(o_code)}</text>',
-              f'<text x="{W - 16}" y="196" font-size="17" text-anchor="end">ETA {esc(local(eta, dest.get("tz")))} {esc(d_code)}</text>',
-              lab(x, 225, "GS"), big(x, 260, f"{int(gs)} kt" if gs is not None else "\u2014"),
-              lab(x + 152, 225, "ALT" + (" geo" if last.get("alt_geo") else "")), big(x + 152, 260, f"FL{int(round(alt / 100)):03d}" if alt is not None else "\u2014"),
-              f'<text x="{x}" y="292" font-size="17">{esc(f"V/S {int(vs):+d} fpm" if vs is not None else "V/S \u2014")}</text>',
-              f'<text x="{x + 152}" y="292" font-size="17">{esc(f"{int(alt):,} ft".replace(",", " ") if alt is not None else "")}</text>',
-              lab(x, 321, "TRK"), big(x, 356, f"{int(trk):03d}\u00b0" if trk is not None else "\u2014"),
-              lab(x + 152, 321, "REMAINING"), big(x + 152, 354, f"{dt['remaining_nm']} NM" if dt.get("remaining_nm") is not None else "\u2014", 30),
-              f'<text x="{x}" y="386" font-size="17">{esc("pos age " + age_txt if age_txt else "")}</text>',
-              f'<line x1="0" y1="402" x2="{W}" y2="402" stroke="#000" stroke-width="2"/>']
-    if lat is not None:
-        src = (dt.get("providers") or {}).get("position") or ""
-        ns, ew = ("N" if lat >= 0 else "S"), ("E" if lon >= 0 else "W")
-        parts.append(f'<text x="16" y="430" font-size="21">{esc(f"{abs(lat):.2f}\u00b0{ns} {abs(lon):.2f}\u00b0{ew}   {src} {age_txt}")}</text>')
-    else:
-        parts.append('<text x="16" y="430" font-size="21">No position yet</text>')
-    pv = dt.get("providers") or {}
-    foot = f"path: {pv.get('path', '\u2014')} {len(path)} pts \u00b7 route: {pv.get('route', '\u2014')} \u00b7 id: {pv.get('identify', '\u2014')}"
-    parts.append(f'<text x="16" y="461" font-size="16">{esc(foot)}</text>')
-    parts.append(f'<text x="{W - 16}" y="461" font-size="16" text-anchor="end">upd {now.astimezone(LOCAL_TZ).strftime("%d.%m %H:%M")}</text>')
-    parts.append('</svg>')
-    return "".join(parts)
-
-
-def svg_idle(now):
-    b64 = base64.b64encode(open("board.png", "rb").read()).decode()
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 {W} {H}" width="{W}" height="{H}">'
-            f'<image href="data:image/png;base64,{b64}" width="{W}" height="{H}" style="image-rendering:pixelated"/></svg>')
-
-
-def write_page(svg):
-    open("index.html", "w").write(
-        '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Cache-Control" content="no-store">'
-        '<meta name="viewport" content="width=800"><title>board</title>'
-        '<style>html,body{margin:0;padding:0;width:100%;height:100%;background:#fff;overflow:hidden}'
-        'svg{display:block;width:100vw;height:auto;max-height:100vh}</style></head>'
-        f'<body>{svg}</body></html>')
-
-
-def main():
-    now = datetime.now(timezone.utc)
-    dt = json.load(open("data.json")) if os.path.exists("data.json") else {"mode": "idle"}
-    state = json.load(open("idle.json")) if os.path.exists("idle.json") else {}
-    if dt.get("mode") == "leg":
-        render_leg(dt, now).save("board.png")
-        write_page(svg_leg(dt, now))
-    else:
-        img, state = render_idle(state, now)
-        img.save("board.png")
-        json.dump(state, open("idle.json", "w"))
-        write_page(svg_idle(now))
-
-
-if __name__ == "__main__":
-    main()
+    std, etd, sta = sched.get("std"), sched.get("etd") or sched.get("std"), sched.get("sta")
+    gs, alt, vs
