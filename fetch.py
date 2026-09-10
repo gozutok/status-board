@@ -259,18 +259,46 @@ def fr24_history(ident, now):
     if not offs:
         return None
     offs.sort(); blocks.sort()
-    tod = offs[len(offs) // 2]
-    block = blocks[len(blocks) // 2] if blocks else None
-    day = int(now.timestamp()) // 86400 * 86400
-    expected = day + tod
-    if expected < now.timestamp() - 3 * 3600:
-        expected += 86400
-    out = {"source": "fr24 history", "expected_off": expected, "block_s": block, "samples": len(offs)}
+    out = {"source": "fr24 history", "tod": offs[len(offs) // 2],
+           "block_s": blocks[len(blocks) // 2] if blocks else None, "samples": len(offs)}
     if last_row and last_row.get("orig_icao") and last_row.get("dest_icao"):
         out["route"] = {"origin": {"icao": last_row["orig_icao"]}, "destination": {"icao": last_row["dest_icao"]},
                         "source": "fr24 history"}
     out["reg"], out["type"] = (last_row or {}).get("reg"), (last_row or {}).get("type")
     return out
+
+
+def expected_off_ts(tod, now, date_str, origin_tz):
+    """UTC timestamp of the departure being counted down to.
+
+    `tod` is the usual takeoff time expressed as seconds into the UTC day, so the
+    calendar day it belongs to has to be chosen. With a date given, pick the
+    candidate whose date *at the origin* matches — a 02:00 local departure falls on
+    the previous UTC day, and asking in UTC would silently pick the wrong leg.
+    Without one, take the next occurrence still ahead of us.
+    """
+    if tod is None:
+        return None
+    base = int(now.timestamp()) // 86400 * 86400
+    cands = [base + tod + k * 86400 for k in (-1, 0, 1, 2)]
+    if date_str:
+        try:
+            want = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            want = None
+        if want:
+            try:
+                tz = ZoneInfo(origin_tz) if origin_tz else timezone.utc
+            except Exception:
+                tz = timezone.utc
+            for c in cands:
+                if datetime.fromtimestamp(c, timezone.utc).astimezone(tz).date() == want:
+                    return c
+            return None
+    for c in cands:
+        if c > now.timestamp() - 3 * 3600:
+            return c
+    return cands[-1]
 
 
 def fr24_track(fr24_id):
@@ -657,8 +685,12 @@ def main():
     out["landed_at"] = prev.get("landed_at") or (now.isoformat() if landed else None)
 
     if hist:
-        out["expected_off"] = hist.get("expected_off")
+        tod = hist.get("tod")
+        if tod is None and hist.get("expected_off"):
+            tod = hist["expected_off"] % 86400
+        out["expected_off"] = expected_off_ts(tod, now, date, origin.get("tz"))
         out["block_s"] = hist.get("block_s")
+        out["date"] = date
     if out.get("off_time") and out.get("landed_at"):
         out["flown_s"] = datetime.fromisoformat(out["landed_at"]).timestamp() - out["off_time"]
 

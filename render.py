@@ -638,13 +638,32 @@ def svg_idle(now):
             f'<image href="data:image/png;base64,{b64}" width="{W}" height="{H}" style="image-rendering:pixelated"/></svg>')
 
 
+# GitHub Pages serves every file with Cache-Control: max-age=600 and offers no way
+# to change it, so a panel refreshing on a 5-minute cycle can sit up to ten minutes
+# behind. (The <meta http-equiv="Cache-Control"> this page used to carry never did
+# anything: the HTML spec defines no such pragma, so browsers ignore it.)
+#
+# A query string is part of the cache key, so the board is also written as its own
+# file and pulled with a fresh timestamp on every load. The page still carries the
+# inline SVG, which is what a renderer without JavaScript keeps showing.
+REFRESH_JS = """(function(){
+function pull(){try{
+var x=new XMLHttpRequest();
+x.open("GET","board.svg?t="+(new Date()).getTime(),true);
+x.onload=function(){var t=x.responseText;
+if(x.status===200&&t&&t.indexOf("<svg")===0){document.getElementById("b").innerHTML=t;}};
+x.onerror=function(){};x.send();}catch(e){}}
+pull();setInterval(pull,120000);})();"""
+
+
 def write_page(svg):
+    open("board.svg", "w").write(svg)
     open("index.html", "w").write(
-        '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Cache-Control" content="no-store">'
+        '<!doctype html><html><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=800"><title>board</title>'
         '<style>html,body{margin:0;padding:0;width:100%;height:100%;background:#fff;overflow:hidden}'
         'svg{display:block;width:100vw;height:auto;max-height:100vh}</style></head>'
-        f'<body>{svg}</body></html>')
+        f'<body><div id="b">{svg}</div><script>{REFRESH_JS}</script></body></html>')
 
 
 def main():
