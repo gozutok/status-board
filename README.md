@@ -2,6 +2,8 @@
 
 Serverless status board for a 7.5" 800×480 e-paper panel running SenseCraft HMI (Web function). GitHub Actions polls Flightradar24 every 5 minutes, falls back to free key-less ADS-B feeds, and commits a rendered `index.html`; GitHub Pages serves it, scaled to whatever viewport SenseCraft's renderer uses.
 
+Pages sends `Cache-Control: max-age=600` on everything and offers no way to change it, so the board is also written to `board.svg` and pulled by the page with a fresh timestamp on load and every two minutes. A query string is part of the cache key, so that request always reaches the origin. The page still carries the inline SVG for a renderer without JavaScript.
+
 ## What is shown
 
 Ident · origin → destination · phase · type · registration · transmitted callsign, over a map
@@ -78,6 +80,8 @@ Free feeds have no satellite coverage: over oceans the position freezes and `pos
 ## Daily use
 
 Either: GitHub app → repo → Actions → Update board → Run workflow → `ident` (and `reg` if known) → Run.
+
+An optional date pins which day's departure the countdown targets, resolved in the origin airport's timezone. FR24 has no schedule data — every endpoint is live or historic — so the time of day still comes from the median of recent legs; the date only decides which day that time lands on.
 
 Or: open `https://YOUR_USER.github.io/status-board/enter.html` on the phone, add it to the home screen, and under Token save a fine-grained token (this repository only, Actions: Read and write). After that a leg is two fields and one tap. Polling stops `HOLD_AFTER_ARRIVAL_MIN` after arrival or 30 h after the input, then photos resume. Empty ident stops manually.
 
