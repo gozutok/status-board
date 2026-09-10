@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 data.json
 .claude/
+index.html
+board.svg
+board.png
+idle.json
+_site/

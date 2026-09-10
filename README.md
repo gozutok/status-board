@@ -1,8 +1,27 @@
 # board
 
-Serverless status board for a 7.5" 800×480 e-paper panel running SenseCraft HMI (Web function). GitHub Actions polls Flightradar24 every 5 minutes, falls back to free key-less ADS-B feeds, and commits a rendered `index.html`; GitHub Pages serves it, scaled to whatever viewport SenseCraft's renderer uses.
+Serverless status board for a 7.5" 800×480 e-paper panel running SenseCraft HMI (Web function). GitHub Actions polls Flightradar24, falls back to free key-less ADS-B feeds, and deploys a rendered `index.html` straight to GitHub Pages, scaled to whatever viewport SenseCraft's renderer uses.
 
-Pages sends `Cache-Control: max-age=600` on everything and offers no way to change it, so the board is also written to `board.svg` and pulled by the page with a fresh timestamp on load and every two minutes. A query string is part of the cache key, so that request always reaches the origin. The page still carries the inline SVG for a renderer without JavaScript.
+## How it keeps running
+
+GitHub's scheduler delivered one run out of eleven here, so the cron is only a
+backstop. Instead each run, while a leg is live, re-dispatches the next one and the
+chain carries a flight from end to end — a fourteen-hour sector entered four hours
+ahead needs no further input, which matters because by then you are on board. The
+chain stops on its own once the leg is over. Re-arming needs a `DISPATCH_TOKEN`
+secret (fine-grained PAT, this repo, Actions: read and write), because GitHub
+deliberately stops `GITHUB_TOKEN` from triggering further runs.
+
+Six-minute interval: Pages caps freshness at ten minutes whatever we do, and its
+soft limit is ten deployments an hour.
+
+Nothing generated is committed. The board is published as a Pages artifact, so
+`index.html`, `board.svg` and `board.png` never enter the repository's permanent
+history — which is also what makes the 30-day retention Flightradar24 requires
+achievable in a public repo. The only commit is `config.json`, once per leg, and
+that is the user's own input.
+
+Pages sends `Cache-Control: max-age=600` on everything and offers no way to change it, so the board is also written to `board.svg` and pulled by the page with a fresh timestamp on load and every two minutes. A query string is part of the cache key, so that request always reaches the origin. The page still carries the inline SVG for a renderer without JavaScript — which is what SenseCraft appears to be, since the panel tracks the ten-minute cache rather than the two-minute pull.
 
 ## What is shown
 
@@ -77,7 +96,7 @@ Free feeds have no satellite coverage: over oceans the position freezes and `pos
 1. Push this folder to a **public** repo. Set `OWNER` and `REPO` at the top of the script in `enter.html` if the repo is not `gozutok/status-board`.
 2. Settings → Actions → General → Workflow permissions → **Read and write permissions** → Save.
 3. Settings → Secrets and variables → Actions → New repository secret → `FR24_TOKEN`, holding a Flightradar24 API token. Without it the board still runs on the free feeds alone.
-4. Settings → Pages → Deploy from a branch → `main` / `/ (root)` → Save. Page: `https://YOUR_USER.github.io/status-board/`.
+4. Settings → Pages → Source → **GitHub Actions**. Page: `https://YOUR_USER.github.io/status-board/`.
 5. Put a few JPG/PNG photos into `idle/`.
 6. Actions → **Update board** → Run workflow with empty fields once (activates the cron, renders the first idle photo).
 7. SenseCraft HMI → device → **Web** → URL from step 3 → Set → shortest refresh interval → Preview → Save → Deploy.
@@ -100,4 +119,4 @@ FR24_TOKEN=... python3 fetch.py && python3 render.py
 
 ## Env (workflow)
 
-`LOCAL_TZ`, `IDLE_ROTATE_MIN`, `HOLD_AFTER_ARRIVAL_MIN`, and the `FR24_TOKEN` secret.
+`LOCAL_TZ`, `IDLE_ROTATE_MIN`, `HOLD_AFTER_ARRIVAL_MIN`, `INTERVAL_S`, and the `FR24_TOKEN` and `DISPATCH_TOKEN` secrets.
