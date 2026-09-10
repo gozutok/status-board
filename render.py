@@ -13,7 +13,7 @@ W, H = 800, 480
 NE = "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson"
 WORLD_GEOJSON = f"{NE}/ne_50m_admin_0_countries.geojson"
 MARINE_GEOJSON = f"{NE}/ne_50m_geography_marine_polys.geojson"
-PLACES_GEOJSON = f"{NE}/ne_50m_populated_places_simple.geojson"
+PLACES_GEOJSON = f"{NE}/ne_50m_populated_places.geojson"
 LAKES_GEOJSON = f"{NE}/ne_50m_lakes.geojson"
 MAX_LABELS = 6
 MAX_CITIES = 5
@@ -50,7 +50,7 @@ def marine():
 
 
 def places():
-    return geo(PLACES_GEOJSON, "ne50_places.geojson")
+    return geo(PLACES_GEOJSON, "ne50_places_full.geojson")
 
 
 def lakes():
@@ -352,7 +352,7 @@ def svg_sea(view, avoid):
             continue
         rank = p.get("scalerank") if p.get("scalerank") is not None else 9
         if best is None or rank > best[0]:
-            best = (rank, (p.get("label") or p.get("name") or "").upper())
+            best = (rank, (p.get("name_tr") or p.get("label") or p.get("name") or "").upper())
     if not best or not best[1]:
         return ""
     label = best[1]
@@ -378,12 +378,13 @@ def svg_cities(view, avoid):
     cands = []
     for f in places()["features"]:
         p = f["properties"]
-        lon, lat = (f.get("geometry") or {}).get("coordinates", [None, None])[:2]
-        name = p.get("name")
+        coords = (f.get("geometry") or {}).get("coordinates") or [None, None]
+        lon, lat = coords[0], coords[1]
+        name = p.get("NAME_TR") or p.get("NAME")
         if lat is None or not name or not view.contains(lat, lon, inset=8):
             continue
-        cands.append(((p.get("scalerank") if p.get("scalerank") is not None else 9),
-                      -(p.get("pop_max") or 0), name, lat, lon))
+        cands.append(((p.get("SCALERANK") if p.get("SCALERANK") is not None else 9),
+                      -(p.get("POP_MAX") or 0), name, lat, lon))
     cands.sort()
     out = []
     for _, _, name, lat, lon in cands:
@@ -415,20 +416,29 @@ def svg_countries(view, avoid, limit=MAX_LABELS):
     cands = []
     for f in world()["features"]:
         p = f["properties"]
-        lx, ly, name = p.get("LABEL_X"), p.get("LABEL_Y"), p.get("NAME")
+        lx, ly, name = p.get("LABEL_X"), p.get("LABEL_Y"), p.get("NAME_TR") or p.get("NAME")
         if lx is None or ly is None or not name:
             continue
         mn = p.get("MIN_LABEL")
         if mn is not None and mn > thresh:
             continue
-        cands.append(((mn if mn is not None else 9), (p.get("LABELRANK") or 9), name, lx, ly))
+        cands.append(((mn if mn is not None else 9), (p.get("LABELRANK") or 9), name, lx, ly,
+                       p.get("ABBREV")))
     cands.sort(key=lambda c: (c[0], c[1], c[2]))
     out = []
-    for _, _, name, lx, ly in cands:
-        label = name.upper()
-        half = 4.3 * len(label)
+    for _, _, name, lx, ly, abbrev in cands:
         x, y = view.xy(ly, lx)
-        if not (view.x0 + 3 + half < x < view.x1 - 3 - half and view.y0 + 14 < y < view.y1 - 8):
+        label, half = None, 0
+        # "Amerika Birleşik Devletleri" will not fit in a 470px box at any useful
+        # zoom, so fall back to the abbreviation rather than dropping the country.
+        for cand in (name.upper(), (abbrev or "").upper()):
+            if not cand:
+                continue
+            w = 4.3 * len(cand)
+            if view.x0 + 3 + w < x < view.x1 - 3 - w:
+                label, half = cand, w
+                break
+        if label is None or not (view.y0 + 14 < y < view.y1 - 8):
             continue
         if any(abs(x - px) < half + pw and abs(y - py) < 20 for px, py, pw in avoid):
             continue
@@ -438,6 +448,21 @@ def svg_countries(view, avoid, limit=MAX_LABELS):
         if len(out) >= limit:
             break
     return "".join(out)
+
+
+STATUS_TR = {
+    "SCHEDULED": "PLANLANDI",
+    "PREPARING": "HAZIRLANIYOR",
+    "ON GROUND": "YERDE",
+    "TAXI": "TAKSİDE",
+    "CLIMB": "TIRMANIŞTA",
+    "CRUISE": "SEYİRDE",
+    "DESCENT": "ALÇALIYOR",
+    "NO SIGNAL": "SİNYAL YOK",
+    "LANDED": "İNDİ",
+    "INBOUND": "GELİYOR",
+    "NOT FOUND": "BULUNAMADI",
+}
 
 
 def esc(s):
@@ -479,7 +504,7 @@ def svg_leg(dt, now):
              f'<text x="16" y="35" font-size="44" font-weight="700" fill="#fff" dominant-baseline="central">{esc(dt.get("ident") or dt.get("callsign"))}</text>',
              '<text x="215" y="35" font-size="40" font-weight="700" fill="#fff" dominant-baseline="central">'
              + esc(o_code) + " \u2192 " + esc(d_code) + '</text>',
-             f'<text x="{W - 16}" y="22" font-size="28" font-weight="700" fill="#fff" text-anchor="end" dominant-baseline="central">{esc(status)}</text>']
+             f'<text x="{W - 16}" y="22" font-size="28" font-weight="700" fill="#fff" text-anchor="end" dominant-baseline="central">{esc(STATUS_TR.get(status, status))}</text>']
     sub = "\u0020\u00b7\u0020".join(x for x in [dt.get("type"), dt.get("reg"),
                                                 dt.get("callsign") if phase in FLOWN else None] if x)
     parts.append(f'<text x="{W - 16}" y="52" font-size="18" fill="#fff" text-anchor="end" dominant-baseline="central">{esc(sub)}</text>')
@@ -584,7 +609,7 @@ def svg_leg(dt, now):
         parts.append(sea)
         parts.append('</g>')
     else:
-        msg = "Waiting for route" if phase == "scheduled" else "Waiting for first position"
+        msg = "Rota bekleniyor" if phase == "scheduled" else "İlk konum bekleniyor"
         parts.append(f'<text x="{(box[0] + box[2]) // 2}" y="{(box[1] + box[3]) // 2}" font-size="24" '
                      f'text-anchor="middle" dominant-baseline="central">{msg}</text>')
     parts.append(f'<rect x="{box[0] + 0.5}" y="{box[1] + 0.5}" width="{box[2] - box[0] - 1}" '
@@ -599,7 +624,7 @@ def svg_leg(dt, now):
     gs, alt, vs, trk = last.get("gs_kt"), last.get("alt_ft"), last.get("vs_fpm"), last.get("track")
     age = dt.get("pos_age_s")
     age = max(0, age) if age is not None else None
-    age_txt = (f"{int(age // 60)} min" if age >= 60 else f"{int(age)} s") if age is not None else ""
+    age_txt = (f"{int(age // 60)} dk" if age >= 60 else f"{int(age)} sn") if age is not None else ""
     rem_nm = dt.get("remaining_nm")
     DASH = "\u2014"
 
@@ -607,14 +632,14 @@ def svg_leg(dt, now):
         flown = dt.get("flown_s")
         if flown is None and off and landed_at:
             flown = datetime.fromisoformat(landed_at).timestamp() - off
-        l1, b1 = "FLIGHT TIME", hm(flown)
-        l2, b2 = "LANDED AT", local(landed_at, dest.get("tz"))
+        l1, b1 = "UÇUŞ SÜRESİ", hm(flown)
+        l2, b2 = "İNİŞ SAATİ", local(landed_at, dest.get("tz"))
         frac = 1.0
-        off_txt = f'OFF {local(off, o.get("tz"))} {o_code}'
-        eta_txt = f'ON {local(landed_at, dest.get("tz"))} {d_code}'
+        off_txt = f'KALKIŞ {local(off, o.get("tz"))} {o_code}'
+        eta_txt = f'İNİŞ {local(landed_at, dest.get("tz"))} {d_code}'
         gs = alt = vs = trk = None
         rem_txt = DASH
-        note = "arrived"
+        note = "vardı"
     elif phase in AIR:
         since = now.timestamp() - off if off else None
         togo = (datetime.fromisoformat(eta) - now).total_seconds() if eta else None
@@ -622,20 +647,20 @@ def svg_leg(dt, now):
             togo = 0
         total = (since or 0) + (togo or 0)
         frac = (since / total) if since and total else 0.0
-        l1, b1 = "SINCE OFF", hm(since)
-        l2, b2 = "TO GO est", hm(togo)
-        off_txt = f'OFF {local(off, o.get("tz"))} {o_code}'
-        eta_txt = f'ETA {local(eta, dest.get("tz"))} {d_code}'
+        l1, b1 = "GEÇEN SÜRE", hm(since)
+        l2, b2 = "KALAN SÜRE", hm(togo)
+        off_txt = f'KALKIŞ {local(off, o.get("tz"))} {o_code}'
+        eta_txt = f'VARIŞ {local(eta, dest.get("tz"))} {d_code}'
         rem_txt = f"{rem_nm} NM" if rem_nm is not None else DASH
-        note = f"pos age {age_txt}" if age_txt else ""
+        note = f"konum {age_txt}" if age_txt else ""
     else:
         to_off = (exp_off - now.timestamp()) if exp_off else None
-        l1, b1 = "OFF IN", (hm(to_off) if to_off is not None and to_off > 0 else "--:--")
-        l2, b2 = "BLOCK est", hm(block_s)
+        l1, b1 = "KALKIŞA", (hm(to_off) if to_off is not None and to_off > 0 else "--:--")
+        l2, b2 = "TAH. SÜRE", hm(block_s)
         frac = 0.0
-        off_txt = f'OFF ~{local(exp_off, o.get("tz"))} {o_code}' if exp_off else f'OFF --:-- {o_code}'
+        off_txt = f'KALKIŞ ~{local(exp_off, o.get("tz"))} {o_code}' if exp_off else f'KALKIŞ --:-- {o_code}'
         arr = (exp_off + block_s) if exp_off and block_s else None
-        eta_txt = f'ETA ~{local(arr, dest.get("tz"))} {d_code}' if arr else f'ETA --:-- {d_code}'
+        eta_txt = f'VARIŞ ~{local(arr, dest.get("tz"))} {d_code}' if arr else f'VARIŞ --:-- {d_code}'
         if have_o and have_d:
             rem_txt = f'{round(gc_dist_nm(o["lat"], o["lon"], dest["lat"], dest["lon"]))} NM'
         else:
@@ -645,11 +670,11 @@ def svg_leg(dt, now):
             if (gs or 0) < 5:
                 trk = None
         if phase == "scheduled":
-            note = "transponder off"
+            note = "transponder kapalı"
         elif phase == "inbound":
-            note = f"inbound {esc(inbound.get('callsign') or '')}".strip()
+            note = f"gelen {esc(inbound.get('callsign') or '')}".strip()
         else:
-            note = f"pos age {age_txt}" if age_txt else ""
+            note = f"konum {age_txt}" if age_txt else ""
 
     trk_txt = "{:03d}\u00b0".format(int(trk)) if trk is not None else DASH
     vs_txt = "V/S {:+d} fpm".format(int(vs)) if vs is not None else ""
@@ -666,38 +691,32 @@ def svg_leg(dt, now):
               f'<rect x="{x}" y="158" width="{int((W - 16 - x) * max(0.0, min(1.0, frac)))}" height="16" fill="#000"/>',
               f'<text x="{x}" y="196" font-size="17">{esc(off_txt)}</text>',
               f'<text x="{W - 16}" y="196" font-size="17" text-anchor="end">{esc(eta_txt)}</text>',
-              lab(x, 225, "GS"), big(x, 260, f"{int(gs)} kt" if gs is not None else DASH),
-              lab(x + 152, 225, "ALT" + (" geo" if last.get("alt_geo") else "")),
+              lab(x, 225, "YER HIZI"), big(x, 260, f"{int(gs)} kt" if gs is not None else DASH),
+              lab(x + 152, 225, "İRTİFA" + (" geo" if last.get("alt_geo") else "")),
               big(x + 152, 260, f"FL{int(round(alt / 100)):03d}" if alt is not None else DASH),
               f'<text x="{x}" y="292" font-size="17">{esc(vs_txt)}</text>',
               f'<text x="{x + 152}" y="292" font-size="17">{esc(alt_txt)}</text>',
-              lab(x, 321, "TRK"), big(x, 356, trk_txt),
-              lab(x + 152, 321, "REMAINING"), big(x + 152, 354, rem_txt, 30),
+              lab(x, 321, "UÇUŞ BAŞI"), big(x, 356, trk_txt),
+              lab(x + 152, 321, "KALAN MESAFE"), big(x + 152, 354, rem_txt, 30),
               f'<text x="{x}" y="386" font-size="17">{esc(note)}</text>',
               f'<line x1="0" y1="402" x2="{W}" y2="402" stroke="#000" stroke-width="2"/>']
 
+    # The provenance line went: it existed to show which source the board was
+    # running on while that was still in doubt, and with only one line of text left
+    # down here the band reads better centred than split across two rows.
     if lat is not None:
-        src = (dt.get("providers") or {}).get("position") or ""
         ns, ew = ("N" if lat >= 0 else "S"), ("E" if lon >= 0 else "W")
         deg = "\u00b0"
-        coords = "{:.2f}{}{} {:.2f}{}{}   {} {}".format(abs(lat), deg, ns, abs(lon), deg, ew, src, age_txt)
-        parts.append('<text x="16" y="430" font-size="21">' + esc(coords) + '</text>')
+        left = "{:.2f}{}{}  {:.2f}{}{}".format(abs(lat), deg, ns, abs(lon), deg, ew)
     elif exp_off:
         tz = ZoneInfo(o.get("tz")) if o.get("tz") else LOCAL_TZ
         when = datetime.fromtimestamp(exp_off, timezone.utc).astimezone(tz).strftime("%d.%m %H:%M")
-        parts.append('<text x="16" y="430" font-size="21">'
-                     + esc("expected off " + when + " " + o_code) + '</text>')
+        left = "tahmini kalkış " + when + " " + o_code
     else:
-        parts.append('<text x="16" y="430" font-size="21">No position yet</text>')
-
-    pv = dt.get("providers") or {}
-    sep = " \u00b7 "
-    foot = ("path: {} {} pts".format(pv.get("path", DASH), len(path)) + sep
-            + "route: {}".format(pv.get("route", DASH)) + sep
-            + "id: {}".format(pv.get("identify", DASH)))
-    parts.append(f'<text x="16" y="461" font-size="16">{esc(foot)}</text>')
-    parts.append(f'<text x="{W - 16}" y="461" font-size="16" text-anchor="end">'
-                 f'upd {now.astimezone(LOCAL_TZ).strftime("%d.%m %H:%M")}</text>')
+        left = "Konum yok"
+    parts.append('<text x="16" y="444" font-size="21">' + esc(left) + '</text>')
+    parts.append(f'<text x="{W - 16}" y="444" font-size="17" text-anchor="end">'
+                 f'güncel {now.astimezone(LOCAL_TZ).strftime("%d.%m %H:%M")}</text>')
     parts.append('</svg>')
     return "".join(parts)
 
@@ -728,8 +747,8 @@ pull();setInterval(pull,120000);})();"""
 
 
 def write_page(svg):
-    open("board.svg", "w").write(svg)
-    open("index.html", "w").write(
+    open("board.svg", "w", encoding="utf-8").write(svg)
+    open("index.html", "w", encoding="utf-8").write(
         '<!doctype html><html><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=800"><title>board</title>'
         '<style>html,body{margin:0;padding:0;width:100%;height:100%;background:#fff;overflow:hidden}'

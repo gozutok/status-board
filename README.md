@@ -29,6 +29,13 @@ Ident · origin → destination · phase · type · registration · transmitted 
 carrying the flown path (solid), the remaining great circle (dotted), a position marker
 rotated to track, a graticule, country and city names, and the sea or ocean underneath.
 
+The panel reads Turkish. Labels and phase names are translated at the point of
+display, so `fetch.py` keeps one canonical vocabulary; place names come from Natural
+Earth's own `NAME_TR` / `name_tr`, which covers all 242 countries, 118 seas and 1251
+towns in the sets used here. A country whose Turkish name cannot fit the box falls
+back to its abbreviation rather than going unlabelled. Units — kt, FL, NM, fpm, ft,
+V/S — stay as they are.
+
 The panel is 1-bit, with no grey to shade with, so the map says everything in solid
 black: water carries a stipple to separate it from land (inland lakes included), and
 the graticule is a full-pixel dashed line rather than a tinted hairline. Nothing on
@@ -38,15 +45,15 @@ The screen follows the leg:
 
 | Phase | Shown as | Map |
 |---|---|---|
-| entered ahead of time, nothing transmitting | SCHEDULED, counting down to the expected takeoff | whole route |
-| transponder live at the gate | PREPARING | whole route |
-| moving on the ground at the origin | TAXI | origin, 400 NM |
-| airborne, climbing | CLIMB | aircraft centred, 1000 NM |
-| airborne, level | CRUISE | aircraft centred, 1000 NM |
-| airborne, descending | DESCENT | aircraft centred, 1000 NM |
-| position older than 45 min | NO SIGNAL, last known values held | last known |
-| on the ground at the destination | LANDED, with flight time and landing time | destination, 400 NM |
-| the aircraft is still flying its previous leg | INBOUND | inbound route |
+| entered ahead of time, nothing transmitting | PLANLANDI, counting down to the expected takeoff | whole route |
+| transponder live at the gate | HAZIRLANIYOR | whole route |
+| moving on the ground at the origin | TAKSİDE | origin, 400 NM |
+| airborne, climbing | TIRMANIŞTA | aircraft centred, 1000 NM |
+| airborne, level | SEYİRDE | aircraft centred, 1000 NM |
+| airborne, descending | ALÇALIYOR | aircraft centred, 1000 NM |
+| position older than 45 min | SİNYAL YOK, last known values held | last known |
+| on the ground at the destination | İNDİ, with flight time and landing time | destination, 400 NM |
+| the aircraft is still flying its previous leg | GELİYOR | inbound route |
 
 Expected takeoff and block time come from the previous few legs of the same flight
 number, which is what makes the screen useful when a flight is entered hours ahead.
