@@ -456,7 +456,7 @@ STATUS_TR = {
     "ON GROUND": "YERDE",
     "TAXI": "TAKSİDE",
     "CLIMB": "TIRMANIŞTA",
-    "CRUISE": "SEYİRDE",
+    "CRUISE": "DÜZ UÇUŞ",
     "DESCENT": "ALÇALIYOR",
     "NO SIGNAL": "SİNYAL YOK",
     "LANDED": "İNDİ",
