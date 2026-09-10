@@ -1,7 +1,7 @@
 {
- "ident": "TK3",
- "reg_input": "TC-JJJ",
- "generated": "2026-09-10T10:42:43.792977+00:00",
+ "ident": "TK281",
+ "reg_input": "TC-LLT",
+ "generated": "2026-09-10T10:48:50.648415+00:00",
  "providers": {
   "route": "adsbdb"
  },
@@ -9,24 +9,24 @@
  "sched": null,
  "hex": null,
  "callsign": null,
- "reg": "TC-JJJ",
+ "reg": "TC-LLT",
  "type": null,
  "route": {
   "origin": {
+   "icao": "ZSPD",
+   "iata": "PVG",
+   "lat": 31.1434,
+   "lon": 121.805,
+   "name": "Shanghai (Pudong)",
+   "tz": "Asia/Shanghai"
+  },
+  "destination": {
    "icao": "LTFM",
    "iata": "IST",
    "lat": 41.261297,
    "lon": 28.741951,
    "name": "Arnavutk\u00f6y, Istanbul",
    "tz": "Europe/Istanbul"
-  },
-  "destination": {
-   "icao": "KJFK",
-   "iata": "JFK",
-   "lat": 40.639801,
-   "lon": -73.7789,
-   "name": "New York",
-   "tz": "America/New_York"
   },
   "source": "adsbdb"
  },
