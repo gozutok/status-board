@@ -731,10 +731,6 @@ def write_page(svg):
     open("board.svg", "w").write(svg)
     open("index.html", "w").write(
         '<!doctype html><html><head><meta charset="utf-8">'
-        # refresh IS a real pragma, unlike the Cache-Control one this page used to
-        # carry. It is the only lever left for a renderer that runs no JavaScript
-        # and loads the page just once.
-        '<meta http-equiv="refresh" content="150">'
         '<meta name="viewport" content="width=800"><title>board</title>'
         '<style>html,body{margin:0;padding:0;width:100%;height:100%;background:#fff;overflow:hidden}'
         'svg{display:block;width:100vw;height:auto;max-height:100vh}</style></head>'
