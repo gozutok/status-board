@@ -37,29 +37,27 @@ def check(name, got, want):
 def main():
     good = True
 
-    # nothing found anywhere: every filter tried on receptions, then all again on
-    # estimates, and never the other way round
+    # nothing found: every filter tried once, all sources asked for each time
     stub(lambda p: [])
     good &= check("bos yanit None", fetch.fr24_position("TK25", "TC-JJO", "THY25"), None)
     order = [(next(k for k in p if k in ("registrations", "flights", "callsigns")), p.get("data_sources"))
              for _, p in CALLS]
     good &= check("sorgu sirasi", order, [
-        ("registrations", "ADSB,MLAT"), ("flights", "ADSB,MLAT"), ("callsigns", "ADSB,MLAT"),
-        ("registrations", "ESTIMATED"), ("flights", "ESTIMATED"), ("callsigns", "ESTIMATED")])
-    good &= check("hicbir sorgu 3 ogeyi asmiyor",
+        ("registrations", "ADSB,MLAT,ESTIMATED"), ("flights", "ADSB,MLAT,ESTIMATED"),
+        ("callsigns", "ADSB,MLAT,ESTIMATED")])
+    good &= check("3 ogeyi asmiyor",
                   max(len(p["data_sources"].split(",")) for _, p in CALLS) <= 3, True)
     good &= check("endpoint", CALLS[0][0], "/live/flight-positions/full")
 
-    # a reception exists: estimates are never asked for
-    stub(lambda p: [{"lat": 1.0, "lon": 2.0, "source": "ADSB"}] if p.get("data_sources") == "ADSB,MLAT" else [])
-    fetch.fr24_position("TK25", "TC-JJO")
-    good &= check("olculmus varken kestirim sorulmuyor",
-                  [p.get("data_sources") for _, p in CALLS], ["ADSB,MLAT"])
-
-    # nothing received, so the estimate is taken — and marked as one
-    stub(lambda p: [{"lat": 1.0, "lon": 2.0, "source": "ESTIMATED"}] if p.get("data_sources") == "ESTIMATED" else [])
+    # whichever source answers, the board is told which it was
+    stub(lambda p: [{"lat": 1.0, "lon": 2.0, "source": "ADSB"}])
     got = fetch.fr24_position("TK25", "TC-JJO")
-    good &= check("kestirime dusuluyor", got["pos"]["estimated"], True)
+    good &= check("olculmus tahmin sayilmiyor", got["pos"]["estimated"], False)
+    good &= check("tek cagri yetiyor", len(CALLS), 1)
+
+    stub(lambda p: [{"lat": 1.0, "lon": 2.0, "source": "ESTIMATED"}])
+    got = fetch.fr24_position("TK25", "TC-JJO")
+    good &= check("kestirim isaretleniyor", got["pos"]["estimated"], True)
     good &= check("kaynak etiketi", got["pos"]["source"], "fr24 estimated")
 
     stub(lambda p: [])

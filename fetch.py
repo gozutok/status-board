@@ -20,6 +20,11 @@ ADSBDB = "https://api.adsbdb.com/v0"
 ROUTESET = "https://api.adsb.lol/api/0/routeset"
 FR24 = "https://fr24api.flightradar24.com/api"
 FR24_TOKEN = os.environ.get("FR24_TOKEN", "").strip()
+# The field takes at most three, so "everything" cannot be spelled out: UAT is
+# the 978 MHz link used by light aircraft over the United States, not by anything
+# this board follows. Whether leaving the parameter out really means all sources
+# is being measured; until it is, these three are named rather than assumed.
+SOURCES = "ADSB,MLAT,ESTIMATED"
 AVSTACK = "http://api.aviationstack.com/v1/flights"
 AIRLINES = "https://raw.githubusercontent.com/jpatokal/openflights/master/data/airlines.dat"
 AIRPORTS = "https://raw.githubusercontent.com/mwgg/Airports/master/airports.json"
@@ -244,13 +249,12 @@ def fr24_probe_sources(last):
 
 
 def fr24_position(ident, reg, callsign=None, first_only=False):
-    """Live position for the leg, measured first and estimated only as a fallback.
+    """Live position for the leg: every source at once, in one call.
 
-    The sources are named explicitly rather than left to the default. The docs say
-    an empty parameter means all of them, but that has not been measured here, and
-    an estimate must never be taken while a real fix is available. ADSB and MLAT are
-    receptions; ESTIMATED is Flightradar24's own dead reckoning for an aircraft that
-    has left coverage, and is asked for only when nothing was received.
+    An aircraft has one current position and it comes from one source, so asking for
+    receptions and estimates separately would only mean paying twice for a question
+    with a single answer. The reply says which source it was, and that is what the
+    board displays: an estimate is drawn hollow and labelled, a reception is not.
     """
     queries = []
     if reg:
@@ -261,13 +265,12 @@ def fr24_position(ident, reg, callsign=None, first_only=False):
         queries.append({"callsigns": callsign})
     if first_only:
         queries = queries[:1]
-    for sources in ("ADSB,MLAT", "ESTIMATED"):
-        for q in queries:
-            j = fr24_get("/live/flight-positions/full",
-                         dict(q, limit=5, data_sources=sources))
-            rows = [x for x in (j or {}).get("data") or [] if x.get("lat") is not None]
-            if rows:
-                return _fr24_pos_from(rows, ident, reg)
+    for q in queries:
+        j = fr24_get("/live/flight-positions/full",
+                     dict(q, limit=5, data_sources=SOURCES))
+        rows = [x for x in (j or {}).get("data") or [] if x.get("lat") is not None]
+        if rows:
+            return _fr24_pos_from(rows, ident, reg)
     return None
 
 
