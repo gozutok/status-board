@@ -213,13 +213,15 @@ def fr24_ts(s):
         return None
 
 
-def fr24_position(ident, reg):
-    """Live position for the leg. One call, 8 credits, two if the first is empty."""
+def fr24_position(ident, reg, callsign=None):
+    """Live position for the leg. 8 credits a query, and later ones only run empty."""
     queries = []
     if reg:
         queries.append({"registrations": reg})
     if ident:
         queries.append({"flights": ident})
+    if callsign:
+        queries.append({"callsigns": callsign})
     rows = []
     for q in queries:
         j = fr24_get("/live/flight-positions/full", dict(q, limit=5))
@@ -322,18 +324,18 @@ def expected_off_ts(tod, now, date_str, origin_tz):
 def fr24_traffic_near(route):
     """How many flights FR24 will serve over the middle of this route.
 
-    Costs about two credits and runs only when the aircraft cannot be found and
-    should be airborne. It separates the two explanations: FR24 has nothing to give
-    in that airspace, or it has traffic there but not this flight.
+    Capped at one result, so six credits, and only while the aircraft cannot be
+    found and should be airborne. It separates the two explanations: FR24 has
+    nothing to give in that airspace, or it has traffic there but not this flight.
+    (The cheaper /count endpoint answers 403 — Explorer does not include it.)
     """
     o, d = route.get("origin") or {}, route.get("destination") or {}
     if o.get("lat") is None or d.get("lat") is None:
         return None
     lat, lon = gc_point(o["lat"], o["lon"], d["lat"], d["lon"], 0.5)
-    j = fr24_get("/live/flight-positions/count",
-                 {"bounds": f"{lat + 8:.3f},{lat - 8:.3f},{lon - 8:.3f},{lon + 8:.3f}"})
-    rows = (j or {}).get("data") or []
-    return rows[0].get("record_count") if rows else None
+    j = fr24_get("/live/flight-positions/light",
+                 {"bounds": f"{lat + 8:.3f},{lat - 8:.3f},{lon - 8:.3f},{lon + 8:.3f}", "limit": 1})
+    return len((j or {}).get("data") or [])
 
 
 def fr24_track(fr24_id):
@@ -543,7 +545,7 @@ def main():
 
     fr24_inbound_route = None
     if FR24_TOKEN:
-        got = fr24_position(ident, reg)
+        got = fr24_position(ident, reg, f"{al_icao}{number}" if al_icao and number else None)
         if got:
             pos = got["pos"]
             fr24_eta, fr24_id, fr24_is_leg = got["eta"], got["fr24_id"], got["is_leg"]
