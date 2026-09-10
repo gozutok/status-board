@@ -1,3 +1,4 @@
+import base64
 import json
 import math
 import os
@@ -210,7 +211,7 @@ def render_leg(dt, now):
     d.text((x, 308), "TRK", font=font(16), fill=0)
     d.text((x, 324), f"{int(trk):03d}°" if trk is not None else "—", font=font(34, True), fill=0)
     d.text((x + 152, 308), "REMAINING", font=font(16), fill=0)
-    d.text((x + 152, 324), f"{dt['remaining_nm']} NM" if dt.get("remaining_nm") is not None else "—", font=font(34, True), fill=0)
+    d.text((x + 152, 326), f"{dt['remaining_nm']} NM" if dt.get("remaining_nm") is not None else "—", font=font(30, True), fill=0)
     d.text((x, 372), f"pos age {int(dt['pos_age_s'] // 60)} min" if dt.get("pos_age_s") is not None and dt["pos_age_s"] >= 60 else (f"pos age {int(dt['pos_age_s'])} s" if dt.get("pos_age_s") is not None else ""), font=font(17), fill=0)
 
     d.line([0, 402, W, 402], fill=0, width=2)
@@ -228,6 +229,16 @@ def render_leg(dt, now):
     return img
 
 
+def write_page():
+    b64 = base64.b64encode(open("board.png", "rb").read()).decode()
+    html = ('<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Cache-Control" content="no-store">'
+            '<meta name="viewport" content="width=800"><title>board</title>'
+            '<style>html,body{margin:0;padding:0;width:100%;height:100%;background:#fff;overflow:hidden}'
+            'img{display:block;width:100vw;height:auto;max-height:100vh;object-fit:contain;image-rendering:pixelated}</style></head>'
+            f'<body><img src="data:image/png;base64,{b64}" width="800" height="480"></body></html>')
+    open("index.html", "w").write(html)
+
+
 def main():
     now = datetime.now(timezone.utc)
     dt = json.load(open("data.json")) if os.path.exists("data.json") else {"mode": "idle"}
@@ -238,6 +249,7 @@ def main():
         img, state = render_idle(state, now)
         img.save("board.png")
         json.dump(state, open("idle.json", "w"))
+    write_page()
 
 
 if __name__ == "__main__":
