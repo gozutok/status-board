@@ -720,9 +720,12 @@ def svg_leg(dt, now):
     # running on while that was still in doubt, and with only one line of text left
     # down here the band reads better centred than split across two rows.
     if est:
-        src = est.get("from_s")
-        gap = ("{:.0f} dk".format(src / 60) if src and src >= 60 else "")
-        left = "tahmini konum" + (" \u00b7 son sabit " + gap + " \u00f6nce" if gap else "")
+        if est.get("anchor") == "fr24":
+            left = "tahmini konum \u00b7 fr24"
+        else:
+            src = est.get("from_s")
+            gap = ("{:.0f} dk".format(src / 60) if src and src >= 60 else "")
+            left = "tahmini konum" + (" \u00b7 son sabit " + gap + " \u00f6nce" if gap else "")
     elif lat is not None:
         ns, ew = ("N" if lat >= 0 else "S"), ("E" if lon >= 0 else "W")
         deg = "\u00b0"

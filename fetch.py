@@ -246,7 +246,8 @@ def fr24_position(ident, reg, callsign=None, first_only=False):
         queries = queries[:1]
     rows = []
     for q in queries:
-        j = fr24_get("/live/flight-positions/full", dict(q, limit=5))
+        j = fr24_get("/live/flight-positions/full",
+                     dict(q, limit=5, data_sources="ADSB,MLAT,ESTIMATED"))
         rows = [x for x in (j or {}).get("data") or [] if x.get("lat") is not None]
         if rows:
             break
@@ -268,7 +269,9 @@ def fr24_position(ident, reg, callsign=None, first_only=False):
         "reg": x.get("reg"), "type": x.get("type"), "lat": x.get("lat"), "lon": x.get("lon"),
         "alt_ft": None if ground else alt, "alt_geo": False, "ground": ground,
         "gs_kt": gs, "track": x.get("track"), "vs_fpm": x.get("vspeed"),
-        "pos_time": fr24_ts(x.get("timestamp")), "source": "fr24",
+        "pos_time": fr24_ts(x.get("timestamp")),
+        "source": ("fr24 " + (x.get("source") or "").lower()).strip(),
+        "estimated": (x.get("source") or "").upper() == "ESTIMATED",
     }
     route = None
     if x.get("orig_icao") and x.get("dest_icao"):
@@ -865,6 +868,9 @@ def main():
                              out.get("block_s") or (hist or {}).get("block_s"), origin)
             if bt:
                 out["log"].append(f"dead reckon backtest: {bt['err_nm']} NM over {bt['gap_min']} min")
+
+    if not out.get("est_pos") and (last or {}).get("estimated") and last.get("lat") is not None:
+        out["est_pos"] = {"lat": last["lat"], "lon": last["lon"], "from_s": None, "anchor": "fr24"}
 
     ref = out.get("est_pos") or last
     if ref and ref.get("lat") is not None and dest.get("lat") is not None and leg_started:
