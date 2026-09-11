@@ -89,7 +89,12 @@ def main():
         os.chdir(WORK)
         os.makedirs(".cache", exist_ok=True)
         os.makedirs("idle", exist_ok=True)
-        shutil.copytree(os.path.join(here, ".cache"), ".cache", dirs_exist_ok=True)
+        # the geodata, when this machine already has it. Without it render downloads
+        # its own copy, which is slower but not wrong — and CI runs these before the
+        # cache is restored, where insisting on it failed the whole run.
+        src = os.path.join(here, ".cache")
+        if os.path.isdir(src):
+            shutil.copytree(src, ".cache", dirs_exist_ok=True)
         live = [leg(OFF)]
         prior = [leg(OFF - dt.timedelta(days=1), OFF - dt.timedelta(days=1) + dt.timedelta(hours=11), "old1")]
 

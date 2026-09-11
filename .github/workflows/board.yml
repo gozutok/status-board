@@ -66,8 +66,6 @@ jobs:
       - run: python3 check.py fetch.py render.py
       - run: python3 test_fr24.py
       - run: python3 test_shapes.py
-      - run: python3 test_leg.py
-      - run: python3 test_edges.py
 
       # Holds the Natural Earth/airport downloads, and the leg state: Flightradar24
       # forbids retaining API-derived data beyond 30 days, and nothing derived from
@@ -77,6 +75,10 @@ jobs:
           path: .cache
           key: geodata-${{ github.run_number }}
           restore-keys: geodata-
+
+      # After the cache, because these render a board and the map data lives there.
+      - run: python3 test_leg.py
+      - run: python3 test_edges.py
 
       - name: Apply input / restore state
         run: |
