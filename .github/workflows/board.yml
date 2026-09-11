@@ -67,6 +67,7 @@ jobs:
       - run: python3 test_fr24.py
       - run: python3 test_shapes.py
       - run: python3 test_leg.py
+      - run: python3 test_edges.py
 
       # Holds the Natural Earth/airport downloads, and the leg state: Flightradar24
       # forbids retaining API-derived data beyond 30 days, and nothing derived from

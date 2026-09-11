@@ -323,7 +323,7 @@ def fr24_history(ident, now):
             last_row = r
         if t and l and 0 < l - t < 20 * 3600:
             blocks.append(l - t)
-    live = None
+    live, arrived = None, None
     for r in rows:
         t = fr24_ts(r.get("datetime_takeoff"))
         ended = str(r.get("flight_ended")).strip().lower() in ("true", "1")
@@ -332,11 +332,17 @@ def fr24_history(ident, now):
                 live = {"fr24_id": r.get("fr24_id"), "off": t, "reg": r.get("reg"),
                         "type": r.get("type"), "callsign": r.get("callsign"),
                         "orig": r.get("orig_icao"), "dest": r.get("dest_icao_actual") or r.get("dest_icao")}
+        land = fr24_ts(r.get("datetime_landed"))
+        # a landing recorded this minute is still a landing, and clocks drift
+        if t and land and -600 < now.timestamp() - land < 12 * 3600:
+            if arrived is None or land > arrived["on"]:
+                arrived = {"off": t, "on": land, "fr24_id": r.get("fr24_id")}
     if not offs:
         return {"source": "fr24 history", "tod": None, "block_s": None, "samples": 0,
-                "current": live} if live else None
+                "current": live, "arrived": arrived} if (live or arrived) else None
     offs.sort(); blocks.sort()
     out = {"source": "fr24 history", "tod": offs[len(offs) // 2], "current": live,
+           "arrived": arrived,
            "block_s": blocks[len(blocks) // 2] if blocks else None, "samples": len(offs)}
     if last_row and last_row.get("orig_icao") and last_row.get("dest_icao"):
         out["route"] = {"origin": {"icao": last_row["orig_icao"]}, "destination": {"icao": last_row["dest_icao"]},
@@ -906,12 +912,22 @@ def main():
         out["eta_sched"] = datetime.fromtimestamp(sched["eta"] or sched["sta"], timezone.utc).isoformat()
 
     landed = bool(prev.get("landed_at"))
+    # A chain that starts after the aircraft is already down never saw it leave, so
+    # leg_started is false and the arrival went unrecognised — the board read YERDE
+    # for an aircraft parked at its destination. The summary says it landed.
+    arrived = (hist or {}).get("arrived") or {}
+    if not landed and arrived.get("on") and near_dest and last and last.get("ground"):
+        landed = True
+        out["off_time"] = out.get("off_time") or arrived.get("off")
+        out["landed_at"] = datetime.fromtimestamp(arrived["on"], timezone.utc).isoformat()
+        leg_started = out["leg_started"] = True
     if leg_started and last and dest.get("lat") is not None:
         if last.get("ground") and near_dest:
             landed = True
         if age is not None and age > 1800 and near_dest and out.get("off_time"):
             landed = True
-    out["landed_at"] = prev.get("landed_at") or (now.isoformat() if landed else None)
+    out["landed_at"] = out.get("landed_at") or prev.get("landed_at") \
+        or (now.isoformat() if landed else None)
 
     if hist:
         tod = hist.get("tod")
