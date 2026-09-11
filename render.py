@@ -670,7 +670,15 @@ def svg_leg(dt, now):
         note = f"konum {age_txt}" if age_txt else ""
     else:
         to_off = (exp_off - now.timestamp()) if exp_off else None
-        l1, b1 = "KALKIŞA", (hm(to_off) if to_off is not None and to_off > 0 else "--:--")
+        # Past the expected departure the field used to go to dashes, which is the
+        # least useful thing it could say at the gate. Count up instead.
+        if to_off is None:
+            b1 = "--:--"
+        elif to_off > 0:
+            b1 = hm(to_off)
+        else:
+            b1 = "-" + hm(-to_off)
+        l1 = "KALKIŞA"
         l2, b2 = "TAH. SÜRE", hm(block_s)
         frac = 0.0
         off_txt = f'KALKIŞ ~{local(exp_off, o.get("tz"))} {o_code}' if exp_off else f'KALKIŞ --:-- {o_code}'

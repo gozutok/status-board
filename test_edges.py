@@ -109,6 +109,16 @@ def main():
                      pos(0.5, t, 460, 34000, flight="TK8", fid="prev1"), [], "INBOUND")
         good &= ok
 
+        # pushback speed is not taxi speed: the cabin is still being prepared
+        setup()
+        t = OFF - dt.timedelta(minutes=12)
+        ok, _ = step("geri itiliyor, taksi degil", t, prior,
+                     pos(0.002, t, 6, 412), [], "PREPARING")
+        good &= ok
+        ok, _ = step("taksi hizina cikti", t, prior,
+                     pos(0.002, t, 18, 412), [], "TAXI")
+        good &= ok
+
         # airborne, then the fix goes stale: extrapolated, then given up on
         setup()
         t = OFF + dt.timedelta(hours=2)
