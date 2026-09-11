@@ -609,12 +609,17 @@ def main():
     hist = prev.get("hist")
     hist_at = datetime.fromisoformat(hist["fetched_at"]) if hist and hist.get("fetched_at") else None
     prev_phase = prev.get("phase")
+    # The summary is what names the leg in the air, and that is the one thing the
+    # track route needs. Refreshing it only before departure meant a flight entered
+    # hours early never learned it had taken off: "current" stayed as it was written
+    # while the aircraft was still on the ground, empty, for the rest of the leg.
+    need_current = bool(prev.get("leg_started")) and not (hist or {}).get("current")
     lost = (prev_phase in ("scheduled", "airborne")
             and not (prev.get("last_pos") or {}).get("lat")
             and not (hist or {}).get("current"))
-    stale = hist_at is not None and now - hist_at > (timedelta(minutes=10) if lost else SCHED_REFRESH)
-    if FR24_TOKEN and ident and (not hist or "current" not in hist
-                                 or (prev_phase in (None, "scheduled", "preparing", "inbound") and stale)):
+    soon = timedelta(minutes=10) if (lost or need_current) else SCHED_REFRESH
+    stale = hist_at is None or now - hist_at > soon
+    if FR24_TOKEN and ident and (not hist or "current" not in hist or stale):
         fresh_hist = fr24_history(ident, now)
         if fresh_hist:
             fresh_hist["fetched_at"] = now.isoformat()
@@ -924,10 +929,19 @@ def main():
     # available the altitude between them says it far better — 300 fpm sustained is
     # 1800 ft over that gap — so V/S is only the fallback for the first fix.
     prev_pos = prev.get("last_pos") or {}
-    d_alt = None
-    if pos and pos.get("alt_ft") is not None and prev_pos.get("alt_ft") is not None \
-            and pos.get("pos_time") != prev_pos.get("pos_time"):
-        d_alt = pos["alt_ft"] - prev_pos["alt_ft"]
+    rate = None
+    if pos and pos.get("alt_ft") is not None and prev_pos.get("alt_ft") is not None:
+        gap = (pos.get("pos_time") or 0) - (prev_pos.get("pos_time") or 0)
+        # A rate, not a difference. Two samples six minutes apart and two an hour
+        # apart say the same thing about a climb, and a raw difference reads the
+        # second as a climb long after it has levelled off — which is what happens
+        # whenever a turn is missed.
+        # An average is only better than the instant reading while the two samples
+        # are close. Stretch the gap and a climb and the level flight after it wash
+        # into each other, so past twenty minutes the aircraft's own vertical speed
+        # is the more honest number.
+        if 60 <= gap <= 1200:
+            rate = (pos["alt_ft"] - prev_pos["alt_ft"]) / (gap / 60)
     fresh_pos = bool(pos) or (last and age is not None and age < STALE_POS.total_seconds())
     if landed:
         phase, status = "landed", "LANDED"
@@ -936,8 +950,8 @@ def main():
     elif leg_started and pos and pos.get("ground") and near_origin:
         phase, status = "taxi", "TAXI"
     elif leg_started and fresh_pos:
-        if d_alt is not None:
-            rising, falling = d_alt > 400, d_alt < -400
+        if rate is not None:
+            rising, falling = rate > 300, rate < -300
         else:
             rising, falling = (vs or 0) > 300, (vs or 0) < -300
         if rising:

@@ -784,7 +784,6 @@ def main():
     dt = json.load(open("data.json")) if os.path.exists("data.json") else {"mode": "idle"}
     state = json.load(open("idle.json")) if os.path.exists("idle.json") else {}
     if dt.get("mode") == "leg":
-        render_leg(dt, now).save("board.png")
         write_page(svg_leg(dt, now))
     else:
         img, state = render_idle(state, now)
