@@ -600,8 +600,13 @@ def main():
         json.dump(out, open("data.json", "w"), indent=1)
         return
     prev = data if data.get("ident") == ident and data.get("mode") != "idle" else {}
-    if prev.get("landed_at") and now - datetime.fromisoformat(prev["landed_at"]) > HOLD_AFTER_ARRIVAL:
+    # The landing has to outlive the leg it ended. Dropping it at the hold meant
+    # every later run went back to Flightradar24 to rediscover an arrival it already
+    # knew about, once every six minutes for as long as the flight stayed entered.
+    was_landed = data.get("landed_at") if data.get("ident") == ident else None
+    if was_landed and now - datetime.fromisoformat(was_landed) > HOLD_AFTER_ARRIVAL:
         out["mode"] = "idle"
+        out["landed_at"] = was_landed
         out["log"].append("arrived, hold expired")
         json.dump(out, open("data.json", "w"), indent=1)
         return
@@ -656,6 +661,7 @@ def main():
     if own_arrival and not prev.get("landed_at") \
             and now.timestamp() - arr["on"] > HOLD_AFTER_ARRIVAL.total_seconds():
         out["mode"] = "idle"
+        out["landed_at"] = datetime.fromtimestamp(arr["on"], timezone.utc).isoformat()
         out["log"].append("arrived before this run, hold already expired")
         json.dump(out, open("data.json", "w"), indent=1)
         return

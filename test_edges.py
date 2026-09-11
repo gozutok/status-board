@@ -152,6 +152,13 @@ def main():
         ok, _ = step("gormedigimiz inisin uzerinden 3 saat", t2, prior + landed,
                      pos(0.4, t2, 460, 34000, flight="TK8", fid="next1"), [], "idle")
         good &= ok
+        t2 += dt.timedelta(minutes=6)
+        ok, d = step("bos ekran boyle kalir", t2, prior + landed,
+                     pos(0.4, t2, 460, 34000, flight="TK8", fid="next1"), [], "idle")
+        good &= ok
+        if d and not d.get("landed_at"):
+            print("  HATA inis bilgisi bos ekranda unutuldu")
+            good = False
 
         # the summary in hand was written before the aircraft moved: no leg in the
         # air, no arrival, and the departure long past. It has to be refetched, or
