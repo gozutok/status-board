@@ -211,12 +211,21 @@ def fr24_get(path, params):
 
 
 def fr24_ts(s):
+    """Seconds since the epoch from an FR24 timestamp.
+
+    Live positions carry a Z; flight-summary's takeoff and landing times do not,
+    though the documentation says they are UTC all the same. Without the suffix
+    fromisoformat returns a naive datetime and .timestamp() reads it as local time —
+    correct only by accident on a UTC runner, and three hours out on the machine
+    this was developed on, which made local runs disagree with production silently.
+    """
     if not s:
         return None
     try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+        t = datetime.fromisoformat(s.replace("Z", "+00:00"))
     except Exception:
         return None
+    return (t if t.tzinfo else t.replace(tzinfo=timezone.utc)).timestamp()
 
 
 def fr24_probe_sources(reg, ident):
@@ -693,8 +702,8 @@ def main():
     track_asked = prev.get("track_asked_at") or 0
     may_ask = now.timestamp() - track_asked >= track_gap
     out["track_gap_s"], out["track_asked_at"] = track_gap, track_asked
-    if not pos and may_ask and (hist or {}).get("current", {}).get("fr24_id"):
-        cur = hist["current"]
+    cur = ((hist or {}).get("current") or {})
+    if not pos and may_ask and cur.get("fr24_id"):
         tr = fr24_track(cur["fr24_id"])
         out["track_asked_at"] = now.timestamp()
         newest = ((tr or {}).get("pts") or [[0]])[-1][0]
@@ -721,7 +730,7 @@ def main():
             out["providers"]["identify"] = "fr24 summary"
             out["fr24_track_done"] = True
             track_pts_seed = pts
-    elif not pos and prev.get("last_pos") and (hist or {}).get("current"):
+    elif not pos and prev.get("last_pos") and cur:
         pos = None  # nothing new to say; the stale fix and the estimate carry it
     route = fr24_route or prev.get("route")
     if not route and hist and hist.get("route"):
@@ -804,7 +813,8 @@ def main():
             ir = prev.get("inbound_route")
         inbound = {"callsign": cs, "route": ir, "ground": pos.get("ground")}
         out["inbound_cs"], out["inbound_route"] = cs, ir
-        if ir and ir.get("destination", {}).get("lat") is not None and not pos.get("ground") and pos.get("gs_kt"):
+        if ir and (ir.get("destination") or {}).get("lat") is not None \
+                and not pos.get("ground") and pos.get("gs_kt"):
             rem_in = gc_dist_nm(pos["lat"], pos["lon"], ir["destination"]["lat"], ir["destination"]["lon"])
             inbound["eta"] = (now + timedelta(hours=rem_in / pos["gs_kt"])).isoformat()
             inbound["remaining_nm"] = round(rem_in)

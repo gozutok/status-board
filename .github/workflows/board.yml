@@ -65,6 +65,7 @@ jobs:
       # their callers. That happened, and the chain died on it. This does not.
       - run: python3 check.py fetch.py render.py
       - run: python3 test_fr24.py
+      - run: python3 test_shapes.py
 
       # Holds the Natural Earth/airport downloads, and the leg state: Flightradar24
       # forbids retaining API-derived data beyond 30 days, and nothing derived from

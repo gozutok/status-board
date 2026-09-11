@@ -590,7 +590,7 @@ def svg_leg(dt, now):
 
         avoid = []
         marks = [(o, o_code), (dest, d_code)]
-        if in_route.get("origin", {}).get("lat") is not None:
+        if (in_route.get("origin") or {}).get("lat") is not None:
             marks.append((in_route["origin"], in_route["origin"].get("iata") or in_route["origin"].get("icao") or ""))
         for ap, code in marks:
             if ap.get("lat") is None or not view.contains(ap["lat"], ap["lon"]):
