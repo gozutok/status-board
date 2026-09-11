@@ -32,8 +32,10 @@ CACHE = ".cache"
 HOLD_AFTER_ARRIVAL = timedelta(minutes=int(os.environ.get("HOLD_AFTER_ARRIVAL_MIN", "60")))
 EXPIRE_AFTER = timedelta(hours=30)
 STALE_POS = timedelta(minutes=45)
-# Below this an aircraft on the ground is being pushed or towed, not taxiing.
-TAXI_KT = 15
+# Ground speed at which the board calls it taxi. Raising this to tell a pushback
+# apart from a taxi was a mistake: a measured 10 kt at Istanbul was a real taxi,
+# and the threshold had been reading those correctly all along.
+TAXI_KT = 5
 EST_AFTER = timedelta(minutes=20)
 SCHED_REFRESH = timedelta(minutes=60)
 NEAR_NM = 15
@@ -1014,11 +1016,6 @@ def main():
     elif leg_started:
         phase, status = "airborne", "NO SIGNAL"
     elif pos and pos.get("ground") and near_origin:
-        # A tug pushing an aircraft off the stand reads as a few knots of ground
-        # speed, and calling that taxi told the cabin the aircraft was on its way
-        # while it was still being prepared. Taxi speed proper is the test, and it is
-        # also what starts the leg — a pushback that goes back to the gate has not
-        # started anything.
         if (pos.get("gs_kt") or 0) >= TAXI_KT:
             phase, status = "taxi", "TAXI"
             leg_started = True
