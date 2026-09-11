@@ -168,8 +168,13 @@ jobs:
       # Hand over even when the run failed. A bad deploy used to end the chain
       # outright, and the board simply stopped until someone looked; five failures
       # in a row still stop it, so a permanently broken push cannot spin for ever.
+      # Not when cancelled, though: a cancellation means someone entered a flight and
+      # that run is already carrying the chain. Handing over as well left both links
+      # alive, and because a link holds the queue for six minutes doing nothing, the
+      # spares piled up behind each other and the board updated whenever the queue
+      # happened to reach them.
       - name: Hand over to the next run
-        if: always() && steps.board.outputs.tracking != 'no'
+        if: '!cancelled() && steps.board.outputs.tracking != ''no'''
         env:
           DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
         run: |
