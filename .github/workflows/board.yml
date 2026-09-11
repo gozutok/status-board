@@ -148,7 +148,11 @@ jobs:
           cp index.html board.svg enter.html config.json _site/
           # only written while idle, where it carries the photo
           [ -f board.png ] && cp board.png _site/ || true
-          echo "tracking=$(python3 -c "import json;print(1 if json.load(open('data.json')).get('mode')=='leg' else 0)")" >> "$GITHUB_OUTPUT"
+          # Words, not 1 and 0. GitHub casts to a number when the two sides differ in
+          # type, so a skipped step's empty output compares equal to "0" and the
+          # handover below was skipped on a failed run — which is how one failing
+          # test ended the chain rather than costing a single update.
+          echo "tracking=$(python3 -c "import json;print('yes' if json.load(open('data.json')).get('mode')=='leg' else 'no')")" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-pages-artifact@v3
         if: steps.guard.outputs.skip != '1'
@@ -165,7 +169,7 @@ jobs:
       # outright, and the board simply stopped until someone looked; five failures
       # in a row still stop it, so a permanently broken push cannot spin for ever.
       - name: Hand over to the next run
-        if: always() && steps.board.outputs.tracking != '0'
+        if: always() && steps.board.outputs.tracking != 'no'
         env:
           DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
         run: |
