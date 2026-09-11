@@ -634,6 +634,24 @@ def main():
             out["log"].append("fr24 history: no previous legs")
     out["hist"] = hist
 
+    # An arrival the board did not witness still ends the leg. The only test for one
+    # used to be "is the aircraft parked at the destination now", which a widebody
+    # stops satisfying the moment it leaves on its next flight — so a chain that came
+    # back late read that next flight as INBOUND and counted the board down to the
+    # following day's departure of a leg that had already flown.
+    # What makes the landing ours rather than an earlier leg of the same flight
+    # number is that it belongs to a leg which left after the flight was entered.
+    arr = (hist or {}).get("arrived") or {}
+    own_arrival = bool(
+        arr.get("on") and arr.get("off") and set_at
+        and arr["off"] >= datetime.fromisoformat(set_at).timestamp() - 3600)
+    if own_arrival and not prev.get("landed_at") \
+            and now.timestamp() - arr["on"] > HOLD_AFTER_ARRIVAL.total_seconds():
+        out["mode"] = "idle"
+        out["log"].append("arrived before this run, hold already expired")
+        json.dump(out, open("data.json", "w"), indent=1)
+        return
+
     sched = prev.get("sched")
     fetched = datetime.fromisoformat(sched["fetched_at"]) if sched and sched.get("fetched_at") else None
     phase_prev = prev.get("phase")
@@ -916,7 +934,8 @@ def main():
     # leg_started is false and the arrival went unrecognised — the board read YERDE
     # for an aircraft parked at its destination. The summary says it landed.
     arrived = (hist or {}).get("arrived") or {}
-    if not landed and arrived.get("on") and near_dest and last and last.get("ground"):
+    if not landed and arrived.get("on") \
+            and (own_arrival or (near_dest and last and last.get("ground"))):
         landed = True
         out["off_time"] = out.get("off_time") or arrived.get("off")
         out["landed_at"] = datetime.fromtimestamp(arrived["on"], timezone.utc).isoformat()

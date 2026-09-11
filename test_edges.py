@@ -136,6 +136,31 @@ def main():
         ok, _ = step("inisten 2 saat sonra -> bos ekran", t, prior + landed, [], [], "idle")
         good &= ok
 
+        # the chain comes back after the aircraft has already left on its next leg:
+        # the landing still happened, and the board used to call the next flight
+        # INBOUND and count down to tomorrow's departure of a leg already flown
+        setup()
+        t = OFF + dt.timedelta(hours=11)
+        landed = [leg(OFF, t, "live1")]
+        t2 = t + dt.timedelta(minutes=30)
+        ok, _ = step("inisi gormedik, ucak sonraki bacakta", t2, prior + landed,
+                     pos(0.4, t2, 460, 34000, flight="TK8", fid="next1"), [], "LANDED")
+        good &= ok
+
+        setup()
+        t2 = t + dt.timedelta(hours=3)
+        ok, _ = step("gormedigimiz inisin uzerinden 3 saat", t2, prior + landed,
+                     pos(0.4, t2, 460, 34000, flight="TK8", fid="next1"), [], "idle")
+        good &= ok
+
+        # an earlier leg of the same flight number, flown before the flight was
+        # entered, must not be read as the arrival of the one being waited for
+        setup(set_at=iso(OFF - dt.timedelta(hours=3)))
+        earlier = [leg(OFF - dt.timedelta(hours=8), OFF - dt.timedelta(hours=7), "earlier1")]
+        ok, _ = step("ayni sefer sayisinin onceki bacagi", OFF - dt.timedelta(hours=2),
+                     earlier, [], [], "SCHEDULED")
+        good &= ok
+
         # a leg set more than thirty hours ago expires on its own
         setup(set_at=iso(OFF - dt.timedelta(hours=40)))
         ok, _ = step("40 saat once girilmis, suresi dolmus", OFF, prior, [], [], "idle")
