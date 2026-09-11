@@ -29,7 +29,7 @@ def setup(ident="TK9", reg="", set_at=None, prev=None):
         os.remove("data.json")
 
 
-def step(name, now, summary, positions, tracks, expect=None):
+def step(name, now, summary, positions, tracks, expect=None, no_api=False):
     fetch.now_utc = lambda: now
     fetch.airports_db = lambda: AIRPORTS
     for fn in ("get", "post"):
@@ -42,6 +42,8 @@ def step(name, now, summary, positions, tracks, expect=None):
     fetch.FR24_TOKEN = "test"
 
     def fr24(path, params):
+        if no_api:
+            raise AssertionError(f"beklenmeyen FR24 sorgusu: {path}")
         if "flight-summary" in path:
             return {"data": summary}
         if "flight-tracks" in path:
@@ -143,6 +145,10 @@ def main():
         landed = [leg(OFF, t, "live1")]
         ok, _ = step("indi", t, prior + landed, pos(1.0, t, 10, 325), track(1.0, t), "LANDED")
         good &= ok
+        t = OFF + dt.timedelta(hours=11, minutes=6)
+        ok, _ = step("indikten sonra sorgu yok", t, prior + landed, [], [], "LANDED",
+                     no_api=True)
+        good &= ok
         t = OFF + dt.timedelta(hours=13)
         ok, _ = step("inisten 2 saat sonra -> bos ekran", t, prior + landed, [], [], "idle")
         good &= ok
@@ -153,7 +159,7 @@ def main():
         setup()
         t = OFF + dt.timedelta(hours=11)
         landed = [leg(OFF, t, "live1")]
-        t2 = t + dt.timedelta(minutes=30)
+        t2 = t + dt.timedelta(minutes=10)
         ok, _ = step("inisi gormedik, ucak sonraki bacakta", t2, prior + landed,
                      pos(0.4, t2, 460, 34000, flight="TK8", fid="next1"), [], "LANDED")
         good &= ok

@@ -29,7 +29,7 @@ AVSTACK = "http://api.aviationstack.com/v1/flights"
 AIRLINES = "https://raw.githubusercontent.com/jpatokal/openflights/master/data/airlines.dat"
 AIRPORTS = "https://raw.githubusercontent.com/mwgg/Airports/master/airports.json"
 CACHE = ".cache"
-HOLD_AFTER_ARRIVAL = timedelta(minutes=int(os.environ.get("HOLD_AFTER_ARRIVAL_MIN", "60")))
+HOLD_AFTER_ARRIVAL = timedelta(minutes=int(os.environ.get("HOLD_AFTER_ARRIVAL_MIN", "15")))
 EXPIRE_AFTER = timedelta(hours=30)
 STALE_POS = timedelta(minutes=45)
 # Ground speed at which the board calls it taxi. Raising this to tell a pushback
@@ -613,6 +613,15 @@ def main():
         out["landed_at"] = was_landed
         out["log"].append("arrived, hold expired")
         json.dump(out, open("data.json", "w"), indent=1)
+        return
+    # Down and inside the hold: there is nothing left to ask Flightradar24. The
+    # board keeps saying İNDİ from what it already knows, and spends no more
+    # credits on an aircraft whose transponder is off at the gate.
+    if prev.get("landed_at"):
+        held = dict(prev)
+        held.update({"ident": ident, "reg_input": reg, "generated": now.isoformat(),
+                     "log": ["indi, sorgu yok"]})
+        json.dump(held, open("data.json", "w"), indent=1)
         return
 
     ap = airports_db()

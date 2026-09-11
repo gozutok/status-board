@@ -125,7 +125,7 @@ jobs:
         id: board
         env:
           FR24_TOKEN: ${{ secrets.FR24_TOKEN }}
-          HOLD_AFTER_ARRIVAL_MIN: "90"
+          HOLD_AFTER_ARRIVAL_MIN: "15"
           LOCAL_TZ: Europe/Istanbul
           IDLE_ROTATE_MIN: "60"
         run: |
