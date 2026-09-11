@@ -153,6 +153,23 @@ def main():
                      pos(0.4, t2, 460, 34000, flight="TK8", fid="next1"), [], "idle")
         good &= ok
 
+        # the summary in hand was written before the aircraft moved: no leg in the
+        # air, no arrival, and the departure long past. It has to be refetched, or
+        # the board reads the aircraft's next flight as inbound for ever.
+        t = OFF + dt.timedelta(hours=11)
+        landed = [leg(OFF, t, "live1")]
+        t2 = t + dt.timedelta(hours=3)
+        stale_prev = {"ident": "TK9", "mode": "leg", "phase": "inbound",
+                      "expected_off": OFF.timestamp(),
+                      "hist": {"source": "fr24 history", "tod": OFF.timestamp() % 86400,
+                               "block_s": 11 * 3600, "samples": 3, "current": None,
+                               "arrived": None,
+                               "fetched_at": iso(t2 - dt.timedelta(minutes=20)) + "+00:00"}}
+        setup(prev=stale_prev)
+        ok, _ = step("bayat ozet yenilenir", t2, prior + landed,
+                     pos(0.4, t2, 460, 34000, flight="TK8", fid="next1"), [], "idle")
+        good &= ok
+
         # an earlier leg of the same flight number, flown before the flight was
         # entered, must not be read as the arrival of the one being waited for
         setup(set_at=iso(OFF - dt.timedelta(hours=3)))

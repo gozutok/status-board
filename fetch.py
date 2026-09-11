@@ -623,7 +623,15 @@ def main():
     lost = (prev_phase in ("scheduled", "airborne")
             and not (prev.get("last_pos") or {}).get("lat")
             and not (hist or {}).get("current"))
-    soon = timedelta(minutes=10) if (lost or need_current) else SCHED_REFRESH
+    # Past the departure the summary has to say one of two things: the leg is in the
+    # air, or it landed. Saying neither means the copy in hand was written before the
+    # aircraft moved, and an hour is far too long to keep believing it — that is how
+    # the board sat on a summary with no leg in it and read the aircraft's next
+    # flight as inbound.
+    exp_prev = prev.get("expected_off")
+    unresolved = (exp_prev is not None and now.timestamp() > exp_prev + 600
+                  and not (hist or {}).get("current") and not (hist or {}).get("arrived"))
+    soon = timedelta(minutes=10) if (lost or need_current or unresolved) else SCHED_REFRESH
     stale = hist_at is None or now - hist_at > soon
     if FR24_TOKEN and ident and (not hist or "current" not in hist or stale):
         fresh_hist = fr24_history(ident, now)
